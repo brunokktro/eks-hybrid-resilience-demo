@@ -1,0 +1,51 @@
+# ALB Ingress - Routes external traffic to hybrid and cloud pods.
+#
+# Architecture:
+#   Internet → ALB (AWS Region) → Target Group (IP mode) → Pods
+#   - /         → podinfo-hybrid (on-premises)
+#   - /hybrid   → podinfo-hybrid (on-premises)
+#   - /cloud    → podinfo-cloud (AWS region)
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: podinfo-ingress
+  namespace: demo-stone
+  labels:
+    demo: hybrid-resilience
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/load-balancer-name: hybrid-resilience-demo-alb
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"
+    alb.ingress.kubernetes.io/tags: "auto-delete=no,Project=hybrid-resilience-demo"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /hybrid
+            pathType: Prefix
+            backend:
+              service:
+                name: podinfo-hybrid
+                port:
+                  number: 9898
+          - path: /cloud
+            pathType: Prefix
+            backend:
+              service:
+                name: podinfo-cloud
+                port:
+                  number: 9898
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: podinfo-hybrid
+                port:
+                  number: 9898

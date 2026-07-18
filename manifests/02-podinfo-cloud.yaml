@@ -1,0 +1,111 @@
+# Podinfo on Cloud Nodes (AWS Region)
+# Counterpart for comparison and cross-cluster communication tests.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podinfo-cloud
+  namespace: demo-stone
+  labels:
+    app: podinfo
+    tier: cloud
+    demo: hybrid-resilience
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: podinfo
+      tier: cloud
+  template:
+    metadata:
+      labels:
+        app: podinfo
+        tier: cloud
+        demo: hybrid-resilience
+    spec:
+      nodeSelector:
+        eks.amazonaws.com/compute-type: ec2
+      containers:
+        - name: podinfo
+          image: ghcr.io/stefanprodan/podinfo:6.7.1
+          ports:
+            - containerPort: 9898
+              name: http
+            - containerPort: 9999
+              name: grpc
+          env:
+            - name: PODINFO_UI_MESSAGE
+              value: "Cloud Node (AWS Region)"
+            - name: PODINFO_UI_COLOR
+              value: "#1565C0"  # Blue = cloud
+          command:
+            - ./podinfo
+            - --port=9898
+            - --grpc-port=9999
+            - --level=info
+            - --random-delay=false
+            - --random-error=false
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9898
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9898
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: podinfo-cloud
+  namespace: demo-stone
+  labels:
+    app: podinfo
+    tier: cloud
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9898
+      targetPort: http
+      name: http
+    - port: 9999
+      targetPort: grpc
+      name: grpc
+  selector:
+    app: podinfo
+    tier: cloud
+---
+# Utility pod for connectivity testing from cloud side
+apiVersion: v1
+kind: Pod
+metadata:
+  name: curl-cloud
+  namespace: demo-stone
+  labels:
+    app: curl
+    tier: cloud
+spec:
+  nodeSelector:
+    eks.amazonaws.com/compute-type: ec2
+  containers:
+    - name: curl
+      image: curlimages/curl:8.10.1
+      command: ["sleep", "infinity"]
+      resources:
+        requests:
+          cpu: 50m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
