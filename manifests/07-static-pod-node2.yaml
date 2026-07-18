@@ -1,0 +1,78 @@
+# STATIC POD - The ONLY workload the kubelet can start WITHOUT the API server.
+#
+# ⚠️  THIS FILE IS NOT APPLIED WITH kubectl!
+#     Static pods are read by the kubelet directly from the node's local disk.
+#     Place this file ON HYBRID NODE 2 at the kubelet's staticPodPath.
+#
+# ─── Setup on Hybrid Node 2 (one-time) ───────────────────────────────────────
+#
+# 1. Enable staticPodPath in the kubelet config via nodeadm.
+#    Edit the nodeConfig.yaml used by nodeadm and add:
+#
+#      apiVersion: node.eks.aws/v1alpha1
+#      kind: NodeConfig
+#      spec:
+#        cluster:
+#          name: <CLUSTER_NAME>
+#          region: <REGION>
+#        kubelet:
+#          config:
+#            staticPodPath: /etc/kubernetes/manifests
+#        hybrid:
+#          ...
+#
+#    Then re-run: sudo nodeadm init --config nodeConfig.yaml
+#    (or add staticPodPath to /etc/kubernetes/kubelet/config.json and
+#     restart the kubelet: sudo systemctl restart kubelet)
+#
+# 2. Create the manifests directory and copy this file there:
+#      sudo mkdir -p /etc/kubernetes/manifests
+#      sudo cp 07-static-pod-node2.yaml /etc/kubernetes/manifests/static-web.yaml
+#
+# 3. The kubelet starts the pod automatically (no kubectl needed).
+#    A read-only "mirror pod" appears in the API as: static-web-<node-name>
+#
+# ─── Behavior during disconnect + node restart (Scenario 4b) ─────────────────
+#
+#   ✓ Static pod RESTARTS with the node (kubelet reads it from local disk)
+#   ✗ It does NOT respond via MetalLB VIP during disconnect:
+#       - MetalLB speaker (DaemonSet) does not restart without the API server
+#       - kube-proxy (DaemonSet) does not restart → Service routing broken
+#   ✓ Access it DIRECTLY via node IP + hostPort: http://<NODE2_IP>:8080
+#
+# This demonstrates WHY AWS docs do not recommend static pods for apps:
+# they survive, but the service mesh/LB layer around them does not.
+# Multi-node replicas (Scenario 4) are the correct mitigation.
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: static-web
+  namespace: demo-stone
+  labels:
+    app: static-web
+    demo: hybrid-resilience
+spec:
+  # hostNetwork: direct access via node IP, no dependency on kube-proxy/CNI
+  # service routing (which won't be functional after an offline restart)
+  hostNetwork: true
+  containers:
+    - name: web
+      image: ghcr.io/stefanprodan/podinfo:6.7.1
+      command:
+        - ./podinfo
+        - --port=8080
+        - --level=info
+      ports:
+        - containerPort: 8080
+          hostPort: 8080
+      env:
+        - name: PODINFO_UI_MESSAGE
+          value: "STATIC POD (kubelet-managed, survives offline restart)"
+      resources:
+        requests:
+          cpu: 50m
+          memory: 32Mi
+        limits:
+          cpu: 200m
+          memory: 64Mi

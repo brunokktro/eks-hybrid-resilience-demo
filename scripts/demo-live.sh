@@ -312,9 +312,26 @@ scenario_4() {
     echo ""
   fi
 
+  step "BONUS (4b): Static pod on Node 2 - the exception"
+  explain "Static pods restart from the node's LOCAL DISK (no API server needed)."
+  explain "Setup required beforehand: manifests/07-static-pod-node2.yaml on Node 2."
+  NODE2_IP="${NODE2_IP:-192.168.3.52}"
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "http://${NODE2_IP}:8080/" 2>/dev/null || echo "TIMEOUT")
+  if [[ "$CODE" == "200" ]]; then
+    echo -e "    ${GREEN}Static pod via node IP (${NODE2_IP}:8080): HTTP ${CODE} ✓ CAME BACK${NC}"
+  else
+    echo -e "    ${YELLOW}Static pod (${NODE2_IP}:8080): ${CODE} (not configured or node still booting)${NC}"
+  fi
+  echo ""
+  explain "Note: it responds ONLY via node IP + hostPort. MetalLB VIP and"
+  explain "ClusterIP Services do NOT route to it - speaker and kube-proxy"
+  explain "(DaemonSets) did not restart. Static pods survive, the LB layer doesn't."
+
+  echo ""
   echo -e "  ${YELLOW}${BOLD}━━━ WORST-CASE LESSON ━━━${NC}"
   echo ""
   explain "Node failure + disconnect = pods on that node stay down until reconnect."
+  explain "Static pods are the exception, but lose Service/LB routing - not for apps."
   explain "Mitigation: multi-node replica distribution (N+1/N+2 across nodes)."
   explain "The app survived BECAUSE replicas exist on the other node."
   explain "For production: distribute critical services across 2-3 nodes per DC."

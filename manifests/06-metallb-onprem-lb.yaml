@@ -38,6 +38,8 @@ spec:
 # L2 advertisement: MetalLB speaker answers ARP for the VIPs on the LAN.
 # L2 mode is the AWS-validated mode for stability during disconnections
 # (BGP mode via Cilium is coupled to the agent and can flap - see Cilium #31702).
+# nodeSelectors restrict announcement to HYBRID nodes only - speakers on
+# cloud nodes must never announce a VIP that lives in the on-prem LAN.
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
 metadata:
@@ -46,6 +48,9 @@ metadata:
 spec:
   ipAddressPools:
     - onprem-pool
+  nodeSelectors:
+    - matchLabels:
+        eks.amazonaws.com/compute-type: hybrid
 ---
 # LoadBalancer Service: exposes server-hybrid-1 on a stable VIP in the LAN.
 # Clients on the on-premises network reach the app via this VIP -

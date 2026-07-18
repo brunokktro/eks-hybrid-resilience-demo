@@ -124,6 +124,7 @@ client-cloud-to-hybrid-xxxxx      1/1    Running  ip-10-43.. (EKS Region)
 | 3b | Hybrid Nodes → External | `kubectl exec` + curl | On-prem pods access external APIs | Egress path validation |
 | 3c | LB On-Premises (MetalLB VIP) | curl to LAN VIP during disconnect | On-prem VIP keeps serving during disconnection | **Local entry point independent of AWS** (analogous to F5 design) |
 | 4 | Node restart DURING disconnect | vCenter VM restart while FIS active | Pods do NOT restart until reconnection (kubelet needs API server at startup) | Worst-case limitation + why multi-node replicas matter |
+| 4b | Static pod after offline restart | Same as 4 | Static pod restarts from local disk, but LB/Service routing to it does not | The exception that proves the rule - not a substitute for multi-node replicas |
 
 ---
 
@@ -785,6 +786,40 @@ kubectl logs -n demo-stone deploy/client-hybrid-to-hybrid --tail=3
 - Static pods are the only workload the kubelet can start offline, but they are NOT recommended for applications - multi-node replicas are the right mitigation
 - For Caravela: distribute critical services across at least 2-3 nodes per DC
 
+#### Phase 4b (bonus): Static Pod - the exception that proves the rule
+
+A static pod placed on Node 2 (see `manifests/07-static-pod-node2.yaml` for setup) demonstrates the ONE workload type that survives an offline restart:
+
+```bash
+# After Node 2 restarts (still disconnected from AWS):
+
+# 1. The static pod CAME BACK - kubelet reads it from local disk, no API server needed.
+#    Access it DIRECTLY via node IP + hostPort:
+curl -s http://192.168.3.52:8080/ | jq '{hostname, message}'
+# {"hostname": "static-web", "message": "STATIC POD (kubelet-managed, survives offline restart)"}
+
+# 2. BUT it does NOT respond via the MetalLB VIP or any ClusterIP Service:
+#    - MetalLB speaker (DaemonSet) did not restart (needs API server)
+#    - kube-proxy (DaemonSet) did not restart (Service routing broken on that node)
+#    Only DIRECT node-IP access works.
+```
+
+**The complete picture after an offline node restart:**
+
+| Workload on restarted node | Comes back? | Reachable via |
+|---------------------------|-------------|---------------|
+| Deployment pods (server-hybrid-2) | ✗ No (kubelet needs API server) | - |
+| MetalLB speaker (DaemonSet) | ✗ No | - |
+| kube-proxy (DaemonSet) | ✗ No | - |
+| **Static pod** | ✓ Yes (local disk manifest) | Node IP + hostPort ONLY |
+
+**Key talking point:**
+> "Static pods survive an offline restart, but everything AROUND them
+> (Service routing, LB announcement) doesn't. That's why AWS docs don't
+> recommend static pods for applications. The right answer for Caravela
+> is what we showed in Scenario 4: replicas distributed across nodes,
+> so a node loss during disconnect never takes the app down."
+
 ---
 
 ### Phase 5: Disconnect During Provisioning (10 min)
@@ -1033,7 +1068,8 @@ eks-hybrid-resilience-demo/
 │   ├── 03-server-cloud.yaml            # SERVER on Cloud Nodes (comparison)
 │   ├── 04-clients.yaml                 # ALL 3 CLIENTS (local + cross-node + cross-cluster)
 │   ├── 05-ingress-alb.yaml            # ALB Ingress configuration
-│   └── 06-metallb-onprem-lb.yaml       # On-prem LB: MetalLB IP pool + L2 + LoadBalancer svc
+│   ├── 06-metallb-onprem-lb.yaml       # On-prem LB: MetalLB IP pool + L2 + LoadBalancer svc
+│   └── 07-static-pod-node2.yaml        # Static pod (NOT kubectl-applied - goes on Node 2 disk)
 ├── terraform/
 │   └── main.tf                         # FIS role, prefix list, disrupt-connectivity template
 └── scripts/
