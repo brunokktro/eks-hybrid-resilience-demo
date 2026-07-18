@@ -1,0 +1,81 @@
+# SERVER-CLOUD: Podinfo on Cloud Nodes (AWS Region)
+# Comparison server + target for LB tests.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: server-cloud
+  namespace: demo-stone
+  labels:
+    app: server
+    location: cloud
+    demo: hybrid-resilience
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: server
+      location: cloud
+  template:
+    metadata:
+      labels:
+        app: server
+        location: cloud
+        demo: hybrid-resilience
+    spec:
+      nodeSelector:
+        eks.amazonaws.com/compute-type: ec2
+      containers:
+        - name: podinfo
+          image: ghcr.io/stefanprodan/podinfo:6.7.1
+          ports:
+            - containerPort: 9898
+              name: http
+            - containerPort: 9999
+              name: grpc
+          env:
+            - name: PODINFO_UI_MESSAGE
+              value: "SERVER-CLOUD (AWS Region)"
+            - name: PODINFO_UI_COLOR
+              value: "#1565C0"
+          command:
+            - ./podinfo
+            - --port=9898
+            - --grpc-port=9999
+            - --level=info
+            - --random-delay=false
+            - --random-error=false
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9898
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9898
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: server-cloud
+  namespace: demo-stone
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9898
+      targetPort: http
+      name: http
+  selector:
+    app: server
+    location: cloud

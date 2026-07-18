@@ -1,13 +1,10 @@
-# Podinfo on Hybrid Nodes (On-Premises)
-# Includes tolerations for resilience during network disconnection.
+# SERVER-HYBRID-1: Podinfo on Hybrid Node 1 (On-Premises)
+# This is the primary on-prem server. Receives requests from:
+#   - client-hybrid (local, same node)
+#   - client-cloud-to-hybrid (cross-cluster, from AWS)
+#   - ALB ingress (external traffic)
 #
-# Key behavior:
-#   - Pods are pinned to hybrid nodes via nodeSelector
-#   - Tolerations prevent eviction when node becomes unreachable
-#   - Without tolerationSeconds: pods survive indefinitely
-#   - With tolerationSeconds: 3600 = 1 hour (demo), production should omit
-#
-# Reference: https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-network-disconnections.html
+# Tolerations keep it alive during network disconnection.
 ---
 apiVersion: v1
 kind: Namespace
@@ -19,48 +16,41 @@ metadata:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: podinfo-hybrid
+  name: server-hybrid-1
   namespace: demo-stone
   labels:
-    app: podinfo
-    tier: hybrid
+    app: server
+    location: hybrid
+    node-id: node1
     demo: hybrid-resilience
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: podinfo
-      tier: hybrid
+      app: server
+      location: hybrid
+      node-id: node1
   template:
     metadata:
       labels:
-        app: podinfo
-        tier: hybrid
+        app: server
+        location: hybrid
+        node-id: node1
         demo: hybrid-resilience
     spec:
-      # Schedule only on hybrid nodes (on-premises)
       nodeSelector:
         eks.amazonaws.com/compute-type: hybrid
+        hybrid-node-id: node1
 
-      # Tolerations: the core of the resilience demo
       tolerations:
-        # Tolerate node unreachable (control plane lost contact)
-        # Default K8s behavior without this: evict after 300s
-        # With this: pod survives for tolerationSeconds (or indefinitely if omitted)
         - key: "node.kubernetes.io/unreachable"
           operator: "Exists"
           effect: "NoExecute"
-          tolerationSeconds: 3600  # 1h for demo. Production: OMIT for indefinite.
-
-        # Tolerate node not-ready (intermediate state before unreachable)
+          tolerationSeconds: 3600
         - key: "node.kubernetes.io/not-ready"
           operator: "Exists"
           effect: "NoExecute"
           tolerationSeconds: 3600
-
-        # Tolerate Cilium agent not-ready
-        # Cilium may restart during disconnection (health coupled to kube-api)
-        # This prevents scheduling failures on reconnect
         - key: "node.cilium.io/agent-not-ready"
           operator: "Exists"
           effect: "NoSchedule"
@@ -75,9 +65,9 @@ spec:
               name: grpc
           env:
             - name: PODINFO_UI_MESSAGE
-              value: "Hybrid Node (On-Premises)"
+              value: "SERVER-HYBRID-1 (On-Premises, Node 1)"
             - name: PODINFO_UI_COLOR
-              value: "#2E7D32"  # Green = on-prem
+              value: "#2E7D32"
           command:
             - ./podinfo
             - --port=9898
@@ -108,20 +98,15 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: podinfo-hybrid
+  name: server-hybrid-1
   namespace: demo-stone
-  labels:
-    app: podinfo
-    tier: hybrid
 spec:
   type: ClusterIP
   ports:
     - port: 9898
       targetPort: http
       name: http
-    - port: 9999
-      targetPort: grpc
-      name: grpc
   selector:
-    app: podinfo
-    tier: hybrid
+    app: server
+    location: hybrid
+    node-id: node1

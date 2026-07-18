@@ -1,50 +1,64 @@
-# Podinfo on Cloud Nodes (AWS Region)
-# Counterpart for comparison and cross-cluster communication tests.
+# SERVER-HYBRID-2: Podinfo on Hybrid Node 2 (On-Premises)
+# Target for cross-node test: client-hybrid-to-hybrid (Node 1) calls this.
+# Proves multi-node on-prem communication works during AWS disconnect.
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: podinfo-cloud
+  name: server-hybrid-2
   namespace: demo-stone
   labels:
-    app: podinfo
-    tier: cloud
+    app: server
+    location: hybrid
+    node-id: node2
     demo: hybrid-resilience
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
-      app: podinfo
-      tier: cloud
+      app: server
+      location: hybrid
+      node-id: node2
   template:
     metadata:
       labels:
-        app: podinfo
-        tier: cloud
+        app: server
+        location: hybrid
+        node-id: node2
         demo: hybrid-resilience
     spec:
       nodeSelector:
-        eks.amazonaws.com/compute-type: ec2
+        eks.amazonaws.com/compute-type: hybrid
+        hybrid-node-id: node2
+
+      tolerations:
+        - key: "node.kubernetes.io/unreachable"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 3600
+        - key: "node.kubernetes.io/not-ready"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 3600
+        - key: "node.cilium.io/agent-not-ready"
+          operator: "Exists"
+          effect: "NoSchedule"
+
       containers:
         - name: podinfo
           image: ghcr.io/stefanprodan/podinfo:6.7.1
           ports:
             - containerPort: 9898
               name: http
-            - containerPort: 9999
-              name: grpc
           env:
             - name: PODINFO_UI_MESSAGE
-              value: "Cloud Node (AWS Region)"
+              value: "SERVER-HYBRID-2 (On-Premises, Node 2)"
             - name: PODINFO_UI_COLOR
-              value: "#1565C0"  # Blue = cloud
+              value: "#1B5E20"
           command:
             - ./podinfo
             - --port=9898
-            - --grpc-port=9999
             - --level=info
-            - --random-delay=false
-            - --random-error=false
           livenessProbe:
             httpGet:
               path: /healthz
@@ -68,44 +82,15 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: podinfo-cloud
+  name: server-hybrid-2
   namespace: demo-stone
-  labels:
-    app: podinfo
-    tier: cloud
 spec:
   type: ClusterIP
   ports:
     - port: 9898
       targetPort: http
       name: http
-    - port: 9999
-      targetPort: grpc
-      name: grpc
   selector:
-    app: podinfo
-    tier: cloud
----
-# Utility pod for connectivity testing from cloud side
-apiVersion: v1
-kind: Pod
-metadata:
-  name: curl-cloud
-  namespace: demo-stone
-  labels:
-    app: curl
-    tier: cloud
-spec:
-  nodeSelector:
-    eks.amazonaws.com/compute-type: ec2
-  containers:
-    - name: curl
-      image: curlimages/curl:8.10.1
-      command: ["sleep", "infinity"]
-      resources:
-        requests:
-          cpu: 50m
-          memory: 32Mi
-        limits:
-          cpu: 100m
-          memory: 64Mi
+    app: server
+    location: hybrid
+    node-id: node2

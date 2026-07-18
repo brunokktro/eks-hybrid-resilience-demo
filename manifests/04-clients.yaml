@@ -1,0 +1,214 @@
+# ALL CLIENTS - Three communication paths under test.
+#
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │  CLIENT-HYBRID (on Node 1) → SERVER-HYBRID-1 (on Node 1)                │
+# │  Path: LOCAL (same node, Cilium eBPF)                                    │
+# │  During disconnect: ✓ 200 always                                         │
+# ├──────────────────────────────────────────────────────────────────────────┤
+# │  CLIENT-HYBRID-TO-HYBRID (on Node 1) → SERVER-HYBRID-2 (on Node 2)      │
+# │  Path: CROSS-NODE (on-prem Cilium VXLAN mesh, no AWS dependency)         │
+# │  During disconnect: ✓ 200 always                                         │
+# ├──────────────────────────────────────────────────────────────────────────┤
+# │  CLIENT-CLOUD-TO-HYBRID (on EC2) → SERVER-HYBRID-1 (on Node 1)          │
+# │  Path: CROSS-CLUSTER (cloud → VPN → Gateway → VXLAN → on-prem)          │
+# │  During disconnect: ✗ TIMEOUT (expected, link down)                      │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# Run during demo:
+#   Terminal 1: kubectl logs deploy/client-hybrid -n demo-stone -f
+#   Terminal 2: kubectl logs deploy/client-hybrid-to-hybrid -n demo-stone -f
+#   Terminal 3: kubectl logs deploy/client-cloud-to-hybrid -n demo-stone -f
+---
+# ═══ CLIENT-HYBRID: Local (Node 1 → Node 1) ══════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client-hybrid
+  namespace: demo-stone
+  labels:
+    app: client
+    location: hybrid
+    path: local
+    demo: hybrid-resilience
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: client
+      path: local
+  template:
+    metadata:
+      labels:
+        app: client
+        location: hybrid
+        path: local
+        demo: hybrid-resilience
+    spec:
+      nodeSelector:
+        eks.amazonaws.com/compute-type: hybrid
+        hybrid-node-id: node1
+      tolerations:
+        - key: "node.kubernetes.io/unreachable"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 3600
+        - key: "node.kubernetes.io/not-ready"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 3600
+        - key: "node.cilium.io/agent-not-ready"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+        - name: client
+          image: curlimages/curl:8.10.1
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "══ CLIENT-HYBRID → SERVER-HYBRID-1 (LOCAL, same node) ══"
+              SEQ=0
+              while true; do
+                SEQ=$((SEQ + 1))
+                TS=$(date '+%H:%M:%S')
+                CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 --max-time 5 \
+                  http://server-hybrid-1.demo-stone:9898/healthz 2>/dev/null || echo "000")
+                if [ "$CODE" = "200" ]; then
+                  echo "[${TS}] #${SEQ} LOCAL → server-hybrid-1 | 200 ✓"
+                else
+                  echo "[${TS}] #${SEQ} LOCAL → server-hybrid-1 | ${CODE} ✗"
+                fi
+                sleep 5
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+---
+# ═══ CLIENT-HYBRID-TO-HYBRID: Cross-Node (Node 1 → Node 2) ═══════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client-hybrid-to-hybrid
+  namespace: demo-stone
+  labels:
+    app: client
+    location: hybrid
+    path: cross-node
+    demo: hybrid-resilience
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: client
+      path: cross-node
+  template:
+    metadata:
+      labels:
+        app: client
+        location: hybrid
+        path: cross-node
+        demo: hybrid-resilience
+    spec:
+      nodeSelector:
+        eks.amazonaws.com/compute-type: hybrid
+        hybrid-node-id: node1
+      tolerations:
+        - key: "node.kubernetes.io/unreachable"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 3600
+        - key: "node.kubernetes.io/not-ready"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 3600
+        - key: "node.cilium.io/agent-not-ready"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+        - name: client
+          image: curlimages/curl:8.10.1
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "══ CLIENT-HYBRID-TO-HYBRID → SERVER-HYBRID-2 (CROSS-NODE, Node1→Node2) ══"
+              SEQ=0
+              while true; do
+                SEQ=$((SEQ + 1))
+                TS=$(date '+%H:%M:%S')
+                CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 --max-time 5 \
+                  http://server-hybrid-2.demo-stone:9898/healthz 2>/dev/null || echo "000")
+                if [ "$CODE" = "200" ]; then
+                  echo "[${TS}] #${SEQ} CROSS-NODE → server-hybrid-2 | 200 ✓"
+                else
+                  echo "[${TS}] #${SEQ} CROSS-NODE → server-hybrid-2 | ${CODE} ✗"
+                fi
+                sleep 5
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+---
+# ═══ CLIENT-CLOUD-TO-HYBRID: Cross-Cluster (Cloud → Node 1) ══════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client-cloud-to-hybrid
+  namespace: demo-stone
+  labels:
+    app: client
+    location: cloud
+    path: cross-cluster
+    demo: hybrid-resilience
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: client
+      path: cross-cluster
+  template:
+    metadata:
+      labels:
+        app: client
+        location: cloud
+        path: cross-cluster
+        demo: hybrid-resilience
+    spec:
+      nodeSelector:
+        eks.amazonaws.com/compute-type: ec2
+      containers:
+        - name: client
+          image: curlimages/curl:8.10.1
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "══ CLIENT-CLOUD-TO-HYBRID → SERVER-HYBRID-1 (CROSS-CLUSTER, Cloud→OnPrem) ══"
+              SEQ=0
+              while true; do
+                SEQ=$((SEQ + 1))
+                TS=$(date '+%H:%M:%S')
+                CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 --max-time 5 \
+                  http://server-hybrid-1.demo-stone:9898/healthz 2>/dev/null || echo "000")
+                if [ "$CODE" = "200" ]; then
+                  echo "[${TS}] #${SEQ} CROSS-CLUSTER → server-hybrid-1 | 200 ✓"
+                else
+                  echo "[${TS}] #${SEQ} CROSS-CLUSTER → server-hybrid-1 | TIMEOUT ✗"
+                fi
+                sleep 5
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi

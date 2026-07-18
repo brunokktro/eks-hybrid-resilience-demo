@@ -84,6 +84,35 @@ graph LR
     style HN fill:#27ae60,stroke:#1e8449,color:#fff
 ```
 
+## Pod Naming Convention
+
+All pod names are designed so that `kubectl get pods` immediately tells you WHERE it runs and WHAT it does:
+
+| Pod Name | Location | Role | Calls |
+|----------|----------|------|-------|
+| **server-hybrid-1** | Hybrid Node 1 (on-prem) | Server | - |
+| **server-hybrid-2** | Hybrid Node 2 (on-prem) | Server | - |
+| **server-cloud** | Amazon EKS (AWS Region) | Server | - |
+| **client-hybrid** | Hybrid Node 1 (on-prem) | Client | → server-hybrid-1 (local) |
+| **client-hybrid-to-hybrid** | Hybrid Node 1 (on-prem) | Client | → server-hybrid-2 (cross-node) |
+| **client-cloud-to-hybrid** | Amazon EKS (AWS Region) | Client | → server-hybrid-1 (cross-cluster) |
+
+Pattern: `{role}-{location}[-to-{target}]`
+
+```bash
+# What you see during the demo:
+$ kubectl get pods -n demo-stone -o wide
+NAME                              READY  STATUS   NODE
+server-hybrid-1-xxxxx             1/1    Running  mi-0xxx... (HYBRID Node 1)
+server-hybrid-1-yyyyy             1/1    Running  mi-0xxx... (HYBRID Node 1)
+server-hybrid-2-xxxxx             1/1    Running  mi-0yyy... (HYBRID Node 2)
+server-cloud-xxxxx                1/1    Running  ip-10-43.. (EKS Region)
+server-cloud-yyyyy                1/1    Running  ip-10-43.. (EKS Region)
+client-hybrid-xxxxx               1/1    Running  mi-0xxx... (HYBRID Node 1)
+client-hybrid-to-hybrid-xxxxx     1/1    Running  mi-0xxx... (HYBRID Node 1)
+client-cloud-to-hybrid-xxxxx      1/1    Running  ip-10-43.. (EKS Region)
+```
+
 ## Demo Scenarios
 
 | # | Scenario | Fault Method | Expected Outcome | What It Proves |
@@ -311,75 +340,34 @@ terraform apply \
 #   ssm_document_name = "demo-stone-network-blackhole-cidr"
 ```
 
-### Step 2: Deploy the Application
+### Step 2: Deploy Servers and Clients
 
 ```bash
-# Create namespace and deploy podinfo on hybrid nodes (with tolerations)
-kubectl apply -f manifests/01-podinfo-hybrid.yaml
+# Deploy all servers
+kubectl apply -f manifests/01-server-hybrid-1.yaml   # On-prem Node 1 (creates namespace)
+kubectl apply -f manifests/02-server-hybrid-2.yaml   # On-prem Node 2
+kubectl apply -f manifests/03-server-cloud.yaml      # AWS cloud
 
-# Deploy podinfo on cloud nodes (for comparison)
-kubectl apply -f manifests/02-podinfo-cloud.yaml
+# Deploy all clients (3 communication paths)
+kubectl apply -f manifests/04-clients.yaml
 
-# Deploy continuous clients (TWO clients for different communication paths)
-kubectl apply -f manifests/04-continuous-clients.yaml
-
-# Verify all pods are running
+# Verify everything is running
 kubectl get pods -n demo-stone -o wide
-
-# Expected output - note WHERE each pod runs:
-# NAME                         READY  STATUS   NODE                        ROLE
-# podinfo-hybrid-xxxxx         1/1    Running  mi-0xxxxxxxxx (hybrid)      SERVER on-prem
-# podinfo-hybrid-xxxxx         1/1    Running  mi-0xxxxxxxxx (hybrid)      SERVER on-prem
-# podinfo-cloud-xxxxx          1/1    Running  ip-10-43-xx (cloud)         SERVER cloud
-# podinfo-cloud-xxxxx          1/1    Running  ip-10-43-xx (cloud)         SERVER cloud
-# client-hybrid-xxxxx          1/1    Running  mi-0xxxxxxxxx (hybrid)      CLIENT on-prem
-# client-cloud-xxxxx           1/1    Running  ip-10-43-xx (cloud)         CLIENT cloud
-# curl-cloud                   1/1    Running  ip-10-43-xx (cloud)         utility
-
-# Verify both clients are producing logs
-echo "=== client-hybrid (local) ==="
-kubectl logs -n demo-stone deploy/client-hybrid --tail=3
-
-echo "=== client-cloud (cross-cluster) ==="
-kubectl logs -n demo-stone deploy/client-cloud --tail=3
-```
-
-**Pod topology:**
-
-```
-┌─ On-Premises (Hybrid Node) ────────────────────────────────────────────┐
-│                                                                        │
-│  [podinfo-hybrid] ← SERVER (2 replicas)                                │
-│  [client-hybrid]  ← CLIENT (calls podinfo-hybrid every 5s)             │
-│                                                                        │
-│  Path: LOCAL pod-to-pod (same node, Cilium eBPF datapath)              │
-│  During disconnect: ✓ CONTINUES (never fails)                          │
-└────────────────────────────────────────────────────────────────────────┘
-
-┌─ AWS Cloud (EC2 Nodes) ────────────────────────────────────────────────┐
-│                                                                        │
-│  [podinfo-cloud]  ← SERVER (2 replicas, for comparison/LB tests)       │
-│  [client-cloud]   ← CLIENT (calls podinfo-hybrid on-prem every 5s)     │
-│                                                                        │
-│  Path: CROSS-CLUSTER (cloud → VXLAN Gateway → on-prem)                 │
-│  During disconnect: ✗ TIMEOUT (link down - expected)                   │
-│  After recovery: ✓ AUTO-HEALS (no manual intervention)                 │
-└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Step 3: Create ALB Ingress
 
 ```bash
 # Deploy the ALB ingress
-kubectl apply -f manifests/03-ingress-alb.yaml
+kubectl apply -f manifests/05-ingress-alb.yaml
 
 # Wait for ALB to provision (~2-3 minutes)
 echo "Waiting for ALB..."
 kubectl wait --for=jsonpath='{.status.loadBalancer.ingress[0].hostname}' \
-  ingress/podinfo-ingress -n demo-stone --timeout=180s
+  ingress/demo-ingress -n demo-stone --timeout=180s
 
 # Get the ALB DNS
-ALB=$(kubectl get ingress podinfo-ingress -n demo-stone \
+ALB=$(kubectl get ingress demo-ingress -n demo-stone \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 echo "ALB ready: http://${ALB}/"
 
@@ -393,29 +381,35 @@ This is the closest to production: microservices distributed across multiple on-
 
 ```bash
 # Prerequisites: TWO hybrid nodes registered in the cluster.
-# If you only have one, clone the VM in vCenter and register the second:
-#   1. Clone the existing hybrid node VM in vCenter
-#   2. Set a different IP (e.g., 192.168.3.52, same /24 subnet)
-#   3. On the new VM: sudo nodeadm init --config nodeConfig.yaml
-#   4. Wait for it to join: kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
+# If you only have one, create a NEW VM in vCenter (do NOT clone the existing one
+# as it has nodeadm binaries and SSM identity already configured for the first node):
+#
+#   1. Create a fresh Ubuntu 24.04 VM in vCenter (same network, same datastore)
+#   2. Assign a different IP in the same subnet (e.g., 192.168.3.52)
+#   3. Install nodeadm: curl -Lo /usr/local/bin/nodeadm <url> && chmod +x
+#   4. Create a NEW SSM Hybrid Activation (or reuse if registration-limit allows)
+#   5. Run: sudo nodeadm init --config nodeConfig.yaml
+#   6. Wait for it to join: kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
+#
+# Why NOT clone: the existing VM has SSM agent identity (mi-XXXX) and nodeadm state
+# configured for the cluster. Cloning duplicates that identity causing conflicts.
+# A fresh VM gets its own mi-YYYYY identity and clean nodeadm init.
 
 # Label the nodes to differentiate them
 kubectl label node <FIRST_HYBRID_NODE> hybrid-node-id=node1
 kubectl label node <SECOND_HYBRID_NODE> hybrid-node-id=node2
 
-# Deploy the cross-node test (server on node2, client on node1)
-kubectl apply -f manifests/05-cross-hybrid-nodes.yaml
+# Deploy servers and cross-node test
+kubectl apply -f manifests/02-server-hybrid-2.yaml
 
 # Verify placement
-kubectl get pods -n demo-stone -l demo=hybrid-resilience -o wide | grep -E "node2|cross-node"
-# NAME                           READY  STATUS   NODE
-# podinfo-node2-xxxxx            1/1    Running  mi-YYYYYYYY (node2)
-# client-cross-node-xxxxx        1/1    Running  mi-XXXXXXXX (node1)
+kubectl get pods -n demo-stone -o wide | grep hybrid
+# server-hybrid-2-xxxxx            1/1    Running  mi-YYYYYYYY (Node 2)
+# client-hybrid-to-hybrid-xxxxx    1/1    Running  mi-XXXXXXXX (Node 1)
 
 # Verify cross-node communication works
-kubectl logs -n demo-stone deploy/client-cross-node --tail=5
-# [09:15:10] #1 → podinfo-node2 | STATUS=200 ✓ cross-node OK
-# [09:15:15] #2 → podinfo-node2 | STATUS=200 ✓ cross-node OK
+kubectl logs -n demo-stone deploy/client-hybrid-to-hybrid --tail=5
+# [09:15:10] #1 CROSS-NODE → server-hybrid-2 | 200 ✓
 ```
 
 **Updated pod topology with 2 hybrid nodes:**
@@ -494,7 +488,7 @@ chmod +x scripts/demo-live.sh
 
 ```bash
 # External traffic reaches the on-prem pods
-ALB=$(kubectl get ingress podinfo-ingress -n demo-stone -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+ALB=$(kubectl get ingress demo-ingress -n demo-stone -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 
 # Single request - note the "message" field showing it's the hybrid pod
 curl -s "http://${ALB}/" | jq '{hostname, message, color}'
@@ -516,11 +510,11 @@ done
 
 ```bash
 # Pod on-prem calling an external API
-kubectl exec -n demo-stone deploy/podinfo-hybrid -- curl -s httpbin.org/ip
+kubectl exec -n demo-stone deploy/server-hybrid-1 -- curl -s httpbin.org/ip
 
 # Pod on-prem calling a service in the cloud (cross-cluster)
-kubectl exec -n demo-stone deploy/podinfo-hybrid -- \
-  curl -s http://podinfo-cloud.demo-stone:9898/ | jq '{hostname, message}'
+kubectl exec -n demo-stone deploy/server-hybrid-1 -- \
+  curl -s http://server-cloud.demo-stone:9898/ | jq '{hostname, message}'
 ```
 
 **Talking point:**
@@ -533,17 +527,20 @@ kubectl exec -n demo-stone deploy/podinfo-hybrid -- \
 
 **This is the core of the demo.**
 
-#### Step 1: Open two terminals with continuous client logs (side by side)
+#### Step 1: Open three terminals with client logs (side by side)
 
 ```bash
-# Terminal 1: LOCAL client (hybrid → hybrid, same node)
+# Terminal 1: LOCAL client (Node 1 → Node 1)
 kubectl logs -n demo-stone deploy/client-hybrid -f
 
-# Terminal 2: CROSS-CLUSTER client (cloud → hybrid, over VXLAN)
-kubectl logs -n demo-stone deploy/client-cloud -f
+# Terminal 2: CROSS-NODE client (Node 1 → Node 2, on-prem mesh)
+kubectl logs -n demo-stone deploy/client-hybrid-to-hybrid -f
+
+# Terminal 3: CROSS-CLUSTER client (Cloud → Node 1, over VPN)
+kubectl logs -n demo-stone deploy/client-cloud-to-hybrid -f
 ```
 
-Both show STATUS=200 before disconnect. The contrast AFTER disconnect is the proof.
+All show 200 before disconnect. The contrast AFTER disconnect is the proof.
 
 #### Step 2: Start the FIS experiment
 
@@ -558,22 +555,25 @@ aws fis start-experiment \
 # In vCenter UI: VM → Edit Settings → Network Adapter 1 → Disconnect
 ```
 
-#### Step 3: Watch the contrast between both clients
+#### Step 3: Watch the contrast across all three clients
 
 After ~40 seconds, the customer sees:
 
 ```
-# Terminal 1 (client-hybrid - LOCAL):
-[09:20:10] #120 → podinfo-hybrid | STATUS=200 ✓ processing
-[09:20:15] #121 → podinfo-hybrid | STATUS=200 ✓ processing    ← UNINTERRUPTED
-[09:20:20] #122 → podinfo-hybrid | STATUS=200 ✓ processing
-[09:20:25] #123 → podinfo-hybrid | STATUS=200 ✓ processing
+# Terminal 1 (client-hybrid - LOCAL, same node):
+[09:20:10] #120 LOCAL → server-hybrid-1 | 200 ✓
+[09:20:15] #121 LOCAL → server-hybrid-1 | 200 ✓     ← UNINTERRUPTED
+[09:20:20] #122 LOCAL → server-hybrid-1 | 200 ✓
 
-# Terminal 2 (client-cloud - CROSS-CLUSTER):
-[09:20:10] #120 → podinfo-hybrid | STATUS=200 ✓ cross-cluster OK
-[09:20:15] #121 → podinfo-hybrid | STATUS=TIMEOUT ✗ link down  ← EXPECTED
-[09:20:20] #122 → podinfo-hybrid | STATUS=TIMEOUT ✗ link down
-[09:20:25] #123 → podinfo-hybrid | STATUS=TIMEOUT ✗ link down
+# Terminal 2 (client-hybrid-to-hybrid - CROSS-NODE, Node1→Node2):
+[09:20:10] #120 CROSS-NODE → server-hybrid-2 | 200 ✓
+[09:20:15] #121 CROSS-NODE → server-hybrid-2 | 200 ✓     ← ALSO UNINTERRUPTED
+[09:20:20] #122 CROSS-NODE → server-hybrid-2 | 200 ✓
+
+# Terminal 3 (client-cloud-to-hybrid - CROSS-CLUSTER, Cloud→OnPrem):
+[09:20:10] #120 CROSS-CLUSTER → server-hybrid-1 | 200 ✓
+[09:20:15] #121 CROSS-CLUSTER → server-hybrid-1 | TIMEOUT ✗   ← EXPECTED
+[09:20:20] #122 CROSS-CLUSTER → server-hybrid-1 | TIMEOUT ✗
 ```
 
 #### Step 4: Show node status
@@ -609,16 +609,16 @@ kubectl get pods -n demo-stone -l tier=hybrid -o wide
 ```bash
 # This client runs on Node 1 and calls a server on Node 2
 # Both are on-premises, communication via Cilium VXLAN over the local LAN
-kubectl logs -n demo-stone deploy/client-cross-node --tail=5
+kubectl logs -n demo-stone deploy/client-hybrid-to-hybrid --tail=5
 ```
 
 **What the customer sees:**
 
 ```
 # DURING AWS DISCONNECT:
-[09:22:10] #150 → podinfo-node2 | STATUS=200 ✓ cross-node OK
-[09:22:15] #151 → podinfo-node2 | STATUS=200 ✓ cross-node OK
-[09:22:20] #152 → podinfo-node2 | STATUS=200 ✓ cross-node OK
+[09:22:10] #150 CROSS-NODE → server-hybrid-2 | 200 ✓
+[09:22:15] #151 CROSS-NODE → server-hybrid-2 | 200 ✓
+[09:22:20] #152 CROSS-NODE → server-hybrid-2 | 200 ✓
 ```
 
 #### Step 2: Summary of all THREE communication paths
@@ -628,10 +628,10 @@ echo "=== LOCAL (Node 1 → Node 1): ==="
 kubectl logs -n demo-stone deploy/client-hybrid --tail=2
 
 echo "=== CROSS-NODE (Node 1 → Node 2, on-prem): ==="
-kubectl logs -n demo-stone deploy/client-cross-node --tail=2
+kubectl logs -n demo-stone deploy/client-hybrid-to-hybrid --tail=2
 
 echo "=== CROSS-CLUSTER (Cloud → Node 1, over VPN): ==="
-kubectl logs -n demo-stone deploy/client-cloud --tail=2
+kubectl logs -n demo-stone deploy/client-cloud-to-hybrid --tail=2
 ```
 
 **Expected results during disconnect:**
@@ -664,36 +664,37 @@ echo "=== LOCAL (hybrid→hybrid): still processing ==="
 kubectl logs -n demo-stone deploy/client-hybrid --tail=3
 
 echo "=== CROSS-CLUSTER (cloud→hybrid): still broken (expected) ==="
-kubectl logs -n demo-stone deploy/client-cloud --tail=3
+kubectl logs -n demo-stone deploy/client-cloud-to-hybrid --tail=3
 ```
 
 #### Step 2: Attempt to scale
 
 ```bash
 # Try to add 2 more replicas
-kubectl scale deploy podinfo-hybrid -n demo-stone --replicas=4
+kubectl scale deploy server-hybrid-1 -n demo-stone --replicas=4
 ```
 
 #### Step 3: Observe the result (wait 15 seconds)
 
 ```bash
-kubectl get pods -n demo-stone -l tier=hybrid -o wide
-# NAME                         READY  STATUS   NODE
-# podinfo-hybrid-xxxxx         1/1    Running  mi-0ee2ff775b4369c29   ← existing
-# podinfo-hybrid-xxxxx         1/1    Running  mi-0ee2ff775b4369c29   ← existing
-# podinfo-hybrid-yyyyy         0/1    Pending  <none>                 ← NEW, can't schedule
-# podinfo-hybrid-zzzzz         0/1    Pending  <none>                 ← NEW, can't schedule
-# client-hybrid-xxxxx          1/1    Running  mi-0ee2ff775b4369c29   ← still processing!
+kubectl get pods -n demo-stone -l location=hybrid -o wide
+# NAME                              READY  STATUS   NODE
+# server-hybrid-1-xxxxx             1/1    Running  mi-0ee2ff... (existing)
+# server-hybrid-1-yyyyy             1/1    Running  mi-0ee2ff... (existing)
+# server-hybrid-1-zzzzz             0/1    Pending  <none>       (NEW, can't schedule)
+# server-hybrid-1-wwwww             0/1    Pending  <none>       (NEW, can't schedule)
+# client-hybrid-xxxxx               1/1    Running  mi-0ee2ff... (still processing!)
+# client-hybrid-to-hybrid-xxxxx     1/1    Running  mi-0ee2ff... (still processing!)
 ```
 
 #### Step 4: Prove existing pods still process
 
 ```bash
-# client-hybrid STILL getting 200s throughout this entire test
+# client-hybrid STILL getting 200s throughout
 kubectl logs -n demo-stone deploy/client-hybrid --tail=3
-# [09:25:10] #180 → podinfo-hybrid | STATUS=200 ✓ processing
-# [09:25:15] #181 → podinfo-hybrid | STATUS=200 ✓ processing
-# [09:25:20] #182 → podinfo-hybrid | STATUS=200 ✓ processing
+# [09:25:10] #180 LOCAL → server-hybrid-1 | 200 ✓
+# [09:25:15] #181 LOCAL → server-hybrid-1 | 200 ✓
+# [09:25:20] #182 LOCAL → server-hybrid-1 | 200 ✓
 ```
 
 **Key talking points:**
@@ -732,11 +733,11 @@ kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
 # mi-0ee2ff775b4369c29    Ready    <none>  40d
 
 # Pending pods get scheduled
-kubectl get pods -n demo-stone -l tier=hybrid -o wide
+kubectl get pods -n demo-stone -l location=hybrid -o wide
 # All 4 replicas now Running
 
 # Scale back to normal
-kubectl scale deploy podinfo-hybrid -n demo-stone --replicas=2
+kubectl scale deploy server-hybrid-1 -n demo-stone --replicas=2
 ```
 
 **Key talking points:**
@@ -884,11 +885,11 @@ aws eks update-nodegroup-config \
 eks-hybrid-resilience-demo/
 ├── README.md                           # This document (full execution guide)
 ├── manifests/
-│   ├── 01-podinfo-hybrid.yaml          # SERVER on Hybrid Node 1 (with tolerations)
-│   ├── 02-podinfo-cloud.yaml           # SERVER on Cloud Nodes (comparison)
-│   ├── 03-ingress-alb.yaml            # ALB Ingress configuration
-│   ├── 04-continuous-clients.yaml      # CLIENTS: hybrid (local) + cloud (cross-cluster)
-│   └── 05-cross-hybrid-nodes.yaml      # SERVER on Node 2 + CLIENT cross-node (Node1→Node2)
+│   ├── 01-server-hybrid-1.yaml         # SERVER on Hybrid Node 1 (with tolerations)
+│   ├── 02-server-hybrid-2.yaml         # SERVER on Hybrid Node 2 (cross-node target)
+│   ├── 03-server-cloud.yaml            # SERVER on Cloud Nodes (comparison)
+│   ├── 04-clients.yaml                 # ALL 3 CLIENTS (local + cross-node + cross-cluster)
+│   └── 05-ingress-alb.yaml            # ALB Ingress configuration
 ├── terraform/
 │   └── main.tf                         # FIS role, custom SSM document, experiment template
 └── scripts/

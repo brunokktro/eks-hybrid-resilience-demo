@@ -68,7 +68,7 @@ scenario_0() {
 scenario_3a() {
   header "SCENARIO 3a: Load Balancer → Hybrid Nodes (Ingress)"
 
-  ALB=$(kubectl get ingress podinfo-ingress -n ${NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+  ALB=$(kubectl get ingress demo-ingress -n ${NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
   if [[ -z "$ALB" ]]; then
     fail "ALB not ready yet. Wait for ingress to provision."
     return
@@ -106,18 +106,19 @@ scenario_3b() {
 
   step "Pod on-premises calling external API (httpbin.org)"
   explain "This validates the pod has outbound internet connectivity"
-  run_cmd "kubectl exec -n ${NAMESPACE} deploy/podinfo-hybrid -- curl -s httpbin.org/ip"
+  run_cmd "kubectl exec -n ${NAMESPACE} deploy/server-hybrid-1 -- curl -s httpbin.org/ip"
   result "On-premises pod can reach the internet"
   pause
 
   step "Cross-cluster: on-premises pod calling cloud pod"
   explain "Pod-to-pod communication between on-prem and cloud via VXLAN"
-  run_cmd "kubectl exec -n ${NAMESPACE} deploy/podinfo-hybrid -- curl -s http://podinfo-cloud.${NAMESPACE}:9898/ | jq '{hostname, message}'"
+  run_cmd "kubectl exec -n ${NAMESPACE} deploy/server-hybrid-1 -- curl -s http://server-cloud.${NAMESPACE}:9898/ | jq '{hostname, message}'"
   pause
 
-  step "Cross-cluster: cloud pod calling on-premises pod"
-  run_cmd "kubectl exec -n ${NAMESPACE} curl-cloud -- curl -s http://podinfo-hybrid.${NAMESPACE}:9898/ | jq '{hostname, message}'"
-  result "Bidirectional communication working: hybrid ↔ cloud, hybrid → internet"
+  step "Cross-node: on-premises Node 1 calling on-premises Node 2"
+  explain "Pod-to-pod between two on-prem nodes via Cilium VXLAN mesh"
+  run_cmd "kubectl exec -n ${NAMESPACE} deploy/server-hybrid-1 -- curl -s http://server-hybrid-2.${NAMESPACE}:9898/ | jq '{hostname, message}'"
+  result "All paths working: local, cross-node, cross-cluster, internet"
   pause
 }
 
@@ -127,7 +128,7 @@ scenario_1() {
 
   step "Current state BEFORE fault injection"
   run_cmd "kubectl get nodes -l ${HYBRID_NODE_LABEL} -o wide"
-  run_cmd "kubectl get pods -n ${NAMESPACE} -l tier=hybrid -o wide"
+  run_cmd "kubectl get pods -n ${NAMESPACE} -l location=hybrid -o wide"
   pause
 
   step "Both clients actively calling podinfo-hybrid every 5s"
@@ -214,13 +215,13 @@ scenario_2() {
   pause
 
   step "Scaling deployment..."
-  run_cmd "kubectl scale deploy podinfo-hybrid -n ${NAMESPACE} --replicas=4"
+  run_cmd "kubectl scale deploy server-hybrid-1 -n ${NAMESPACE} --replicas=4"
 
   explain "Waiting 15s for the scheduler to attempt scheduling..."
   sleep 15
 
   step "Pod status after scale attempt:"
-  run_cmd "kubectl get pods -n ${NAMESPACE} -l tier=hybrid -o wide"
+  run_cmd "kubectl get pods -n ${NAMESPACE} -l location=hybrid -o wide"
 
   echo ""
   explain "2 pods: Running (existing, processing - proven by continuous client)"
@@ -274,14 +275,14 @@ scenario_recovery() {
   echo ""
   step "Pod status after recovery:"
   sleep 5  # Give scheduler a moment
-  run_cmd "kubectl get pods -n ${NAMESPACE} -l tier=hybrid -o wide"
+  run_cmd "kubectl get pods -n ${NAMESPACE} -l location=hybrid -o wide"
 
   result "Pending pods are now scheduled and Running"
   explain "The cluster reconciled automatically. Zero data loss, zero manual intervention."
   pause
 
   step "Scaling back to 2 replicas (cleanup)"
-  run_cmd "kubectl scale deploy podinfo-hybrid -n ${NAMESPACE} --replicas=2"
+  run_cmd "kubectl scale deploy server-hybrid-1 -n ${NAMESPACE} --replicas=2"
 }
 
 # ─── Main Menu ────────────────────────────────────────────────────────────────
