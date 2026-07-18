@@ -21,6 +21,7 @@ graph TB
             ALB["ALB<br/>(internet-facing)"]
             subgraph CloudNodes["Cloud Nodes (EC2)"]
                 PC["podinfo-cloud<br/>(comparison)"]
+                CC["client-cloud<br/>→ podinfo-hybrid"]
             end
             subgraph GatewayNodes["Gateway Nodes (t3.large)"]
                 GW["Hybrid Node Gateway<br/>(VXLAN endpoint)"]
@@ -29,27 +30,36 @@ graph TB
         end
     end
 
-    subgraph OnPrem["On-Premises (vCenter/KVM/Hyper-V)"]
-        subgraph HybridNode["Hybrid Node (VM/Bare Metal)"]
-            PH["podinfo-hybrid<br/>+ tolerations<br/>+ nodeSelector: hybrid"]
-            Cilium["Cilium Agent<br/>(CNI)"]
+    subgraph OnPrem["On-Premises (vSphere Datacenter)"]
+        subgraph HN1["Hybrid Node 1 (VM #1 - 192.168.3.51)"]
+            PH1["podinfo-hybrid<br/>(SERVER, 2 replicas)"]
+            CH["client-hybrid<br/>→ local server"]
+            CXN["client-cross-node<br/>→ Node 2 server"]
         end
-        VPN_EP["VPN Endpoint<br/>(pfSense/router)"]
+        subgraph HN2["Hybrid Node 2 (VM #2 - 192.168.3.52)"]
+            PH2["podinfo-node2<br/>(SERVER)"]
+        end
+        VPN_EP["VPN Endpoint<br/>(pfSense)"]
     end
 
-    Internet(("Internet<br/>Client")) --> ALB
-    ALB --> PC
-    ALB --> PH
+    Internet(("Internet")) --> ALB
+    ALB --> PH1
 
-    CP -. "kubelet heartbeat<br/>(node lease)" .-> HybridNode
-    GW <== "VXLAN Tunnel<br/>(pod-to-pod)" ==> Cilium
-    VPC <-- "VPN Site-to-Site<br/>(IPSec/BGP)" --> VPN_EP
-    PH -. "egress: curl httpbin.org" .-> Internet
+    CP -. "kubelet heartbeat" .-> HN1
+    CP -. "kubelet heartbeat" .-> HN2
+    GW <== "VXLAN" ==> HN1
+    GW <== "VXLAN" ==> HN2
+    VPC <-- "VPN S2S" --> VPN_EP
+
+    CC -. "cross-cluster" .-> PH1
+    CXN -. "cross-node<br/>(on-prem VXLAN)" .-> PH2
 
     style FIS fill:#ff6b6b,stroke:#c0392b,color:#fff
-    style PH fill:#27ae60,stroke:#1e8449,color:#fff
+    style PH1 fill:#27ae60,stroke:#1e8449,color:#fff
+    style PH2 fill:#1B5E20,stroke:#0d3311,color:#fff
     style PC fill:#2980b9,stroke:#1a5276,color:#fff
     style CP fill:#f39c12,stroke:#d68910,color:#fff
+    style CXN fill:#8e24aa,stroke:#6a1b9a,color:#fff
 ```
 
 ### Network Topology
@@ -79,6 +89,7 @@ graph LR
 | # | Scenario | Fault Method | Expected Outcome | What It Proves |
 |---|----------|--------------|------------------|----------------|
 | 1 | Steady-state disconnect | FIS (network blackhole on Gateway Nodes) | Existing pods continue serving requests. Node transitions to NotReady after ~40s. Tolerations prevent eviction. | **"DC doesn't stop if AWS goes down"** |
+| 1b | Multi-node on-prem communication | FIS (same as 1) | Pod on Hybrid Node 1 → Pod on Hybrid Node 2 continues working | **Production-like: microservices distributed across DC nodes** |
 | 2 | Disconnect during provisioning | FIS + `kubectl scale` | New pods remain Pending (kube-api unreachable). Existing pods unaffected. | Known limitation - transparent trade-off |
 | 3a | LB Region → Hybrid Nodes | ALB + curl | External traffic reaches on-prem pods via VXLAN tunnel | Ingress path validation |
 | 3b | Hybrid Nodes → External | `kubectl exec` + curl | On-prem pods access external APIs | Egress path validation |
@@ -309,26 +320,51 @@ kubectl apply -f manifests/01-podinfo-hybrid.yaml
 # Deploy podinfo on cloud nodes (for comparison)
 kubectl apply -f manifests/02-podinfo-cloud.yaml
 
-# Deploy continuous client (proves processing continues during disconnect)
-kubectl apply -f manifests/04-continuous-client.yaml
+# Deploy continuous clients (TWO clients for different communication paths)
+kubectl apply -f manifests/04-continuous-clients.yaml
 
 # Verify all pods are running
 kubectl get pods -n demo-stone -o wide
 
-# Expected output:
-# NAME                              READY   STATUS    NODE
-# podinfo-hybrid-xxxxx              1/1     Running   mi-0xxxxxxxxx (hybrid)
-# podinfo-hybrid-xxxxx              1/1     Running   mi-0xxxxxxxxx (hybrid)
-# podinfo-cloud-xxxxx               1/1     Running   ip-10-43-xx (cloud)
-# podinfo-cloud-xxxxx               1/1     Running   ip-10-43-xx (cloud)
-# continuous-client-xxxxx           1/1     Running   mi-0xxxxxxxxx (hybrid)
-# curl-cloud                        1/1     Running   ip-10-43-xx (cloud)
+# Expected output - note WHERE each pod runs:
+# NAME                         READY  STATUS   NODE                        ROLE
+# podinfo-hybrid-xxxxx         1/1    Running  mi-0xxxxxxxxx (hybrid)      SERVER on-prem
+# podinfo-hybrid-xxxxx         1/1    Running  mi-0xxxxxxxxx (hybrid)      SERVER on-prem
+# podinfo-cloud-xxxxx          1/1    Running  ip-10-43-xx (cloud)         SERVER cloud
+# podinfo-cloud-xxxxx          1/1    Running  ip-10-43-xx (cloud)         SERVER cloud
+# client-hybrid-xxxxx          1/1    Running  mi-0xxxxxxxxx (hybrid)      CLIENT on-prem
+# client-cloud-xxxxx           1/1    Running  ip-10-43-xx (cloud)         CLIENT cloud
+# curl-cloud                   1/1    Running  ip-10-43-xx (cloud)         utility
 
-# Verify continuous client is producing logs
-kubectl logs -n demo-stone deploy/continuous-client --tail=5
-# [09:15:10] #1 STATUS=200 OK - pod is processing
-# [09:15:15] #2 STATUS=200 OK - pod is processing
-# ...
+# Verify both clients are producing logs
+echo "=== client-hybrid (local) ==="
+kubectl logs -n demo-stone deploy/client-hybrid --tail=3
+
+echo "=== client-cloud (cross-cluster) ==="
+kubectl logs -n demo-stone deploy/client-cloud --tail=3
+```
+
+**Pod topology:**
+
+```
+┌─ On-Premises (Hybrid Node) ────────────────────────────────────────────┐
+│                                                                        │
+│  [podinfo-hybrid] ← SERVER (2 replicas)                                │
+│  [client-hybrid]  ← CLIENT (calls podinfo-hybrid every 5s)             │
+│                                                                        │
+│  Path: LOCAL pod-to-pod (same node, Cilium eBPF datapath)              │
+│  During disconnect: ✓ CONTINUES (never fails)                          │
+└────────────────────────────────────────────────────────────────────────┘
+
+┌─ AWS Cloud (EC2 Nodes) ────────────────────────────────────────────────┐
+│                                                                        │
+│  [podinfo-cloud]  ← SERVER (2 replicas, for comparison/LB tests)       │
+│  [client-cloud]   ← CLIENT (calls podinfo-hybrid on-prem every 5s)     │
+│                                                                        │
+│  Path: CROSS-CLUSTER (cloud → VXLAN Gateway → on-prem)                 │
+│  During disconnect: ✗ TIMEOUT (link down - expected)                   │
+│  After recovery: ✓ AUTO-HEALS (no manual intervention)                 │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Step 3: Create ALB Ingress
@@ -351,7 +387,65 @@ echo "ALB ready: http://${ALB}/"
 curl -s "http://${ALB}/" | jq '{hostname, message}'
 ```
 
-### Step 4: Run the Demo
+### Step 4: Deploy Cross-Node Communication Test (requires 2 hybrid nodes)
+
+This is the closest to production: microservices distributed across multiple on-prem nodes, communicating via Cilium VXLAN mesh independently of AWS.
+
+```bash
+# Prerequisites: TWO hybrid nodes registered in the cluster.
+# If you only have one, clone the VM in vCenter and register the second:
+#   1. Clone the existing hybrid node VM in vCenter
+#   2. Set a different IP (e.g., 192.168.3.52, same /24 subnet)
+#   3. On the new VM: sudo nodeadm init --config nodeConfig.yaml
+#   4. Wait for it to join: kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
+
+# Label the nodes to differentiate them
+kubectl label node <FIRST_HYBRID_NODE> hybrid-node-id=node1
+kubectl label node <SECOND_HYBRID_NODE> hybrid-node-id=node2
+
+# Deploy the cross-node test (server on node2, client on node1)
+kubectl apply -f manifests/05-cross-hybrid-nodes.yaml
+
+# Verify placement
+kubectl get pods -n demo-stone -l demo=hybrid-resilience -o wide | grep -E "node2|cross-node"
+# NAME                           READY  STATUS   NODE
+# podinfo-node2-xxxxx            1/1    Running  mi-YYYYYYYY (node2)
+# client-cross-node-xxxxx        1/1    Running  mi-XXXXXXXX (node1)
+
+# Verify cross-node communication works
+kubectl logs -n demo-stone deploy/client-cross-node --tail=5
+# [09:15:10] #1 → podinfo-node2 | STATUS=200 ✓ cross-node OK
+# [09:15:15] #2 → podinfo-node2 | STATUS=200 ✓ cross-node OK
+```
+
+**Updated pod topology with 2 hybrid nodes:**
+
+```
+┌─ Hybrid Node 1 (vSphere VM #1, 192.168.3.51) ──────────────────────┐
+│                                                                      │
+│  [podinfo-hybrid]    ← SERVER (2 replicas)                           │
+│  [client-hybrid]     ← CLIENT → podinfo-hybrid (local, same node)   │
+│  [client-cross-node] ← CLIENT → podinfo-node2 (cross-node, Node 2)  │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+            │                                    ▲
+            │        Cilium VXLAN (on-prem)       │
+            ▼                                    │
+┌─ Hybrid Node 2 (vSphere VM #2, 192.168.3.52) ──────────────────────┐
+│                                                                      │
+│  [podinfo-node2]     ← SERVER (target for cross-node test)           │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+
+┌─ AWS Cloud (EC2 Nodes) ─────────────────────────────────────────────┐
+│                                                                      │
+│  [podinfo-cloud]     ← SERVER (comparison)                           │
+│  [client-cloud]      ← CLIENT → podinfo-hybrid (cross-cluster)      │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Step 5: Run the Demo
 
 ```bash
 chmod +x scripts/demo-live.sh
@@ -439,13 +533,17 @@ kubectl exec -n demo-stone deploy/podinfo-hybrid -- \
 
 **This is the core of the demo.**
 
-#### Step 1: Start the continuous client log (open a dedicated terminal)
+#### Step 1: Open two terminals with continuous client logs (side by side)
 
 ```bash
-# This terminal stays visible during the entire disconnect test.
-# The customer sees: requests succeeding every 5s, proving ACTIVE processing.
-kubectl logs -n demo-stone deploy/continuous-client -f
+# Terminal 1: LOCAL client (hybrid → hybrid, same node)
+kubectl logs -n demo-stone deploy/client-hybrid -f
+
+# Terminal 2: CROSS-CLUSTER client (cloud → hybrid, over VXLAN)
+kubectl logs -n demo-stone deploy/client-cloud -f
 ```
+
+Both show STATUS=200 before disconnect. The contrast AFTER disconnect is the proof.
 
 #### Step 2: Start the FIS experiment
 
@@ -460,27 +558,25 @@ aws fis start-experiment \
 # In vCenter UI: VM → Edit Settings → Network Adapter 1 → Disconnect
 ```
 
-#### Step 3: Watch the node transition (second terminal)
+#### Step 3: Watch the contrast between both clients
 
-```bash
-# Watch node status - heartbeat stops after ~10s, NotReady after ~40s
-watch -n 5 'kubectl get nodes -o wide'
+After ~40 seconds, the customer sees:
+
+```
+# Terminal 1 (client-hybrid - LOCAL):
+[09:20:10] #120 → podinfo-hybrid | STATUS=200 ✓ processing
+[09:20:15] #121 → podinfo-hybrid | STATUS=200 ✓ processing    ← UNINTERRUPTED
+[09:20:20] #122 → podinfo-hybrid | STATUS=200 ✓ processing
+[09:20:25] #123 → podinfo-hybrid | STATUS=200 ✓ processing
+
+# Terminal 2 (client-cloud - CROSS-CLUSTER):
+[09:20:10] #120 → podinfo-hybrid | STATUS=200 ✓ cross-cluster OK
+[09:20:15] #121 → podinfo-hybrid | STATUS=TIMEOUT ✗ link down  ← EXPECTED
+[09:20:20] #122 → podinfo-hybrid | STATUS=TIMEOUT ✗ link down
+[09:20:25] #123 → podinfo-hybrid | STATUS=TIMEOUT ✗ link down
 ```
 
-#### Step 4: Prove processing continues
-
-```bash
-# Back in the continuous-client log terminal, the customer sees:
-# [09:20:10] #120 STATUS=200 OK - pod is processing
-# [09:20:15] #121 STATUS=200 OK - pod is processing   ← AFTER disconnect
-# [09:20:20] #122 STATUS=200 OK - pod is processing
-# ...
-#
-# The key visual: STATUS=200 keeps appearing even after the node goes NotReady.
-# This is LOCAL pod-to-pod communication (same node), unaffected by AWS disconnect.
-```
-
-#### Step 5: Show node status vs pod status
+#### Step 4: Show node status
 
 ```bash
 # Node is NotReady (no heartbeat to control plane)
@@ -490,57 +586,122 @@ kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
 
 # BUT pods remain Running (tolerations prevent eviction)
 kubectl get pods -n demo-stone -l tier=hybrid -o wide
-# NAME                              READY   STATUS    NODE
-# podinfo-hybrid-xxxxx              1/1     Running   mi-0ee2ff775b4369c29
-# podinfo-hybrid-xxxxx              1/1     Running   mi-0ee2ff775b4369c29
-# continuous-client-xxxxx           1/1     Running   mi-0ee2ff775b4369c29
+# podinfo-hybrid-xxxxx   1/1   Running   mi-0ee2ff775b4369c29
+# podinfo-hybrid-xxxxx   1/1   Running   mi-0ee2ff775b4369c29
+# client-hybrid-xxxxx    1/1   Running   mi-0ee2ff775b4369c29
 ```
 
 **Key talking points:**
-- The node is marked NotReady because the kubelet can't send heartbeats
-- The `unreachable:NoExecute` taint was added by the node-lifecycle-controller
-- Pods survive because of the tolerations (without them: eviction in 5 min)
-- **Most importantly:** the continuous client proves the pods are ACTIVELY PROCESSING, not just showing a stale status
-- Pod-to-pod communication via Cilium datapath continues locally (VXLAN encap is local to the node)
+- **client-hybrid (local):** STATUS=200 continuously - pods PROCESS requests without interruption
+- **client-cloud (cross-cluster):** TIMEOUT - expected because the VXLAN tunnel traverses the broken link
+- This proves exactly what the customer needs: **workloads on-premises continue operating even if AWS connectivity is lost**
+- The cross-cluster path failing is expected and acceptable - the DATACENTER is independent
+- Pod-to-pod on the same node uses Cilium eBPF datapath (kernel-level, no control plane dependency)
+
+---
+
+### Phase 3b: Multi-Node On-Premises Communication During Disconnect (5 min)
+
+**The production scenario: microservices distributed across multiple DC nodes.**
+
+#### Step 1: Show cross-node client (Hybrid Node 1 → Hybrid Node 2)
+
+```bash
+# This client runs on Node 1 and calls a server on Node 2
+# Both are on-premises, communication via Cilium VXLAN over the local LAN
+kubectl logs -n demo-stone deploy/client-cross-node --tail=5
+```
+
+**What the customer sees:**
+
+```
+# DURING AWS DISCONNECT:
+[09:22:10] #150 → podinfo-node2 | STATUS=200 ✓ cross-node OK
+[09:22:15] #151 → podinfo-node2 | STATUS=200 ✓ cross-node OK
+[09:22:20] #152 → podinfo-node2 | STATUS=200 ✓ cross-node OK
+```
+
+#### Step 2: Summary of all THREE communication paths
+
+```bash
+echo "=== LOCAL (Node 1 → Node 1): ==="
+kubectl logs -n demo-stone deploy/client-hybrid --tail=2
+
+echo "=== CROSS-NODE (Node 1 → Node 2, on-prem): ==="
+kubectl logs -n demo-stone deploy/client-cross-node --tail=2
+
+echo "=== CROSS-CLUSTER (Cloud → Node 1, over VPN): ==="
+kubectl logs -n demo-stone deploy/client-cloud --tail=2
+```
+
+**Expected results during disconnect:**
+
+| Path | Status | Why |
+|------|--------|-----|
+| client-hybrid (same node) | ✓ STATUS=200 | Cilium eBPF datapath, local |
+| client-cross-node (Node 1 → Node 2) | ✓ STATUS=200 | Cilium VXLAN over local LAN, independent of AWS |
+| client-cloud (Cloud → Node 1) | ✗ TIMEOUT | Path traverses the broken VPN link |
+
+**Key talking point:**
+> "This is the production scenario. Your microservices will be distributed
+> across multiple nodes in the datacenter. This test proves that
+> even cross-node communication within the DC continues working
+> during an AWS disconnection. The Cilium overlay mesh between
+> on-premises nodes is LOCAL - it doesn't depend on the control plane.
+> Only the initial setup needs the control plane. Once running,
+> the datapath is autonomous."
 
 ---
 
 ### Phase 4: Disconnect During Provisioning (10 min)
 
-**While still disconnected, and continuous-client still logging 200s:**
+**While still disconnected. client-hybrid still logging 200s.**
 
-#### Step 1: Attempt to scale
+#### Step 1: Show both clients (client-hybrid still 200, client-cloud still TIMEOUT)
+
+```bash
+echo "=== LOCAL (hybrid→hybrid): still processing ==="
+kubectl logs -n demo-stone deploy/client-hybrid --tail=3
+
+echo "=== CROSS-CLUSTER (cloud→hybrid): still broken (expected) ==="
+kubectl logs -n demo-stone deploy/client-cloud --tail=3
+```
+
+#### Step 2: Attempt to scale
 
 ```bash
 # Try to add 2 more replicas
 kubectl scale deploy podinfo-hybrid -n demo-stone --replicas=4
 ```
 
-#### Step 2: Observe the result (wait 15 seconds)
+#### Step 3: Observe the result (wait 15 seconds)
 
 ```bash
 kubectl get pods -n demo-stone -l tier=hybrid -o wide
-# NAME                              READY   STATUS    NODE
-# podinfo-hybrid-xxxxx              1/1     Running   mi-0ee2ff775b4369c29
-# podinfo-hybrid-xxxxx              1/1     Running   mi-0ee2ff775b4369c29
-# podinfo-hybrid-yyyyy              0/1     Pending   <none>     ← NEW - can't schedule
-# podinfo-hybrid-zzzzz              0/1     Pending   <none>     ← NEW - can't schedule
-# continuous-client-xxxxx           1/1     Running   mi-0ee2ff775b4369c29
+# NAME                         READY  STATUS   NODE
+# podinfo-hybrid-xxxxx         1/1    Running  mi-0ee2ff775b4369c29   ← existing
+# podinfo-hybrid-xxxxx         1/1    Running  mi-0ee2ff775b4369c29   ← existing
+# podinfo-hybrid-yyyyy         0/1    Pending  <none>                 ← NEW, can't schedule
+# podinfo-hybrid-zzzzz         0/1    Pending  <none>                 ← NEW, can't schedule
+# client-hybrid-xxxxx          1/1    Running  mi-0ee2ff775b4369c29   ← still processing!
 ```
 
-#### Step 3: Show the events
+#### Step 4: Prove existing pods still process
 
 ```bash
-kubectl get events -n demo-stone --sort-by='.lastTimestamp' | tail -5
-# ... FailedScheduling: 0/3 nodes are available: 1 node(s) were unreachable...
+# client-hybrid STILL getting 200s throughout this entire test
+kubectl logs -n demo-stone deploy/client-hybrid --tail=3
+# [09:25:10] #180 → podinfo-hybrid | STATUS=200 ✓ processing
+# [09:25:15] #181 → podinfo-hybrid | STATUS=200 ✓ processing
+# [09:25:20] #182 → podinfo-hybrid | STATUS=200 ✓ processing
 ```
 
 **Key talking points:**
-- Existing pods (2 Running + continuous-client): **still processing**, unaffected
-- New pods: Pending because the scheduler can't reach the hybrid node
-- This is a control plane limitation, NOT a workload limitation
-- Mitigation: pre-size replicas for the expected load during disconnection (N+1 or N+2)
-- The continuous-client log keeps showing 200s - **proof that existing work is uninterrupted**
+- Existing pods (2 Running + client-hybrid): **still actively processing** (proven by logs)
+- New pods: Pending - scheduler can't reach the hybrid node
+- This is a **control plane limitation**, NOT a workload limitation
+- Mitigation: pre-size replicas for expected disconnection load (N+1 or N+2)
+- The continuous logs are undeniable proof that existing work is uninterrupted
 
 ---
 
@@ -550,19 +711,40 @@ kubectl get events -n demo-stone --sort-by='.lastTimestamp' | tail -5
 # Stop FIS experiment (auto-stops after duration), OR
 # Reconnect the network adapter in vCenter
 
-# Watch recovery
-watch -n 5 'kubectl get nodes; echo "---"; kubectl get pods -n demo-stone -o wide'
+# Watch recovery in both client terminals:
+# Terminal 1 (client-hybrid): was 200 throughout, stays 200
+# Terminal 2 (client-cloud): was TIMEOUT, transitions back to 200
 ```
 
-**What the customer will see:**
-1. Node transitions back to `Ready` (within seconds of reconnection)
-2. Pending pods get scheduled and start `Running`
-3. Full cluster reconciliation - zero data loss
+**What the customer sees in client-cloud terminal (the "aha" moment):**
 
-**Talking point:**
-> "Recovery is automatic. The moment connectivity is restored,
-> the node heartbeat resumes, taints are removed, and pending
-> workloads get scheduled. No manual intervention needed."
+```
+[09:30:15] #240 → podinfo-hybrid | STATUS=TIMEOUT ✗ link down
+[09:30:20] #241 → podinfo-hybrid | STATUS=TIMEOUT ✗ link down
+[09:30:25] #242 → podinfo-hybrid | STATUS=200 ✓ cross-cluster OK    ← AUTO-HEALED!
+[09:30:30] #243 → podinfo-hybrid | STATUS=200 ✓ cross-cluster OK
+```
+
+```bash
+# Node transitions back to Ready
+kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
+# NAME                    STATUS   ROLES   AGE
+# mi-0ee2ff775b4369c29    Ready    <none>  40d
+
+# Pending pods get scheduled
+kubectl get pods -n demo-stone -l tier=hybrid -o wide
+# All 4 replicas now Running
+
+# Scale back to normal
+kubectl scale deploy podinfo-hybrid -n demo-stone --replicas=2
+```
+
+**Key talking points:**
+- Recovery is **automatic** - zero manual intervention
+- client-hybrid: never had a single failure (local path independent)
+- client-cloud: auto-heals the moment connectivity is restored
+- Pending pods get scheduled immediately
+- Full cluster reconciliation, zero data loss
 
 ---
 
@@ -702,10 +884,11 @@ aws eks update-nodegroup-config \
 eks-hybrid-resilience-demo/
 ├── README.md                           # This document (full execution guide)
 ├── manifests/
-│   ├── 01-podinfo-hybrid.yaml          # Podinfo on Hybrid Nodes (with tolerations)
-│   ├── 02-podinfo-cloud.yaml           # Podinfo on Cloud Nodes (comparison)
+│   ├── 01-podinfo-hybrid.yaml          # SERVER on Hybrid Node 1 (with tolerations)
+│   ├── 02-podinfo-cloud.yaml           # SERVER on Cloud Nodes (comparison)
 │   ├── 03-ingress-alb.yaml            # ALB Ingress configuration
-│   └── 04-continuous-client.yaml       # Client that proves processing during disconnect
+│   ├── 04-continuous-clients.yaml      # CLIENTS: hybrid (local) + cloud (cross-cluster)
+│   └── 05-cross-hybrid-nodes.yaml      # SERVER on Node 2 + CLIENT cross-node (Node1→Node2)
 ├── terraform/
 │   └── main.tf                         # FIS role, custom SSM document, experiment template
 └── scripts/

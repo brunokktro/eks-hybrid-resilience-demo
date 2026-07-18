@@ -130,9 +130,11 @@ scenario_1() {
   run_cmd "kubectl get pods -n ${NAMESPACE} -l tier=hybrid -o wide"
   pause
 
-  step "Continuous client is actively calling podinfo every 5s"
-  explain "This proves the pods are PROCESSING, not just showing a stale Running status"
-  run_cmd "kubectl logs -n ${NAMESPACE} deploy/continuous-client --tail=5"
+  step "Both clients actively calling podinfo-hybrid every 5s"
+  explain "client-hybrid (LOCAL): on-prem → on-prem (same node)"
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-hybrid --tail=3"
+  explain "client-cloud (CROSS-CLUSTER): cloud → on-prem (via VXLAN)"
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-cloud --tail=3"
   pause
 
   step "Injecting network fault..."
@@ -183,20 +185,21 @@ scenario_1() {
     sleep 10
   done
 
-  step "Node is NotReady. Checking pod status:"
-  run_cmd "kubectl get pods -n ${NAMESPACE} -l tier=hybrid -o wide"
+  step "Node is NotReady. Checking BOTH clients:"
+  echo ""
+  echo -e "  ${GREEN}${BOLD}client-hybrid (LOCAL - on-prem → on-prem):${NC}"
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-hybrid --tail=5"
+  echo -e "  ${RED}${BOLD}client-cloud (CROSS-CLUSTER - cloud → on-prem):${NC}"
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-cloud --tail=5"
 
   echo ""
-  step "PROOF: Continuous client STILL getting 200s (active processing)"
-  explain "These requests are LOCAL pod-to-pod (same node). AWS disconnect does NOT affect them."
-  run_cmd "kubectl logs -n ${NAMESPACE} deploy/continuous-client --tail=5"
-
+  echo -e "  ${GREEN}${BOLD}━━━ THE CONTRAST IS THE PROOF ━━━${NC}"
   echo ""
-  echo -e "  ${GREEN}${BOLD}━━━ PODS ARE STILL RUNNING AND PROCESSING! ━━━${NC}"
-  echo ""
-  explain "The workload is UNAFFECTED. Only the control plane lost contact."
-  explain "Pod-to-pod communication via Cilium datapath continues locally."
-  explain "This is exactly the behavior needed: DC keeps operating if AWS goes down."
+  explain "client-hybrid: STATUS=200 (uninterrupted - local processing continues)"
+  explain "client-cloud:  STATUS=TIMEOUT (expected - link is down)"
+  explain ""
+  explain "This proves: the DATACENTER keeps operating independently."
+  explain "Only the cross-cluster link is affected. Local workloads are immune."
   pause
 }
 
