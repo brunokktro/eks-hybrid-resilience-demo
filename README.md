@@ -929,7 +929,7 @@ tolerations:
   - key: "node.kubernetes.io/unreachable"
     operator: "Exists"
     effect: "NoExecute"
-    tolerationSeconds: 3600  # 1h for demo. Production: omit entirely.
+    tolerationSeconds: 3600  # 1h - DEMO VALUE. See trade-offs below.
 
   - key: "node.kubernetes.io/not-ready"
     operator: "Exists"
@@ -937,16 +937,123 @@ tolerations:
     tolerationSeconds: 3600
 ```
 
+### The tolerationSeconds Trade-Off (discuss openly with the customer)
+
+**This demo uses 3600s (1 hour). There is NO universally correct value.** The same mechanism that protects workloads during a network disconnection DELAYS recovery from a real node failure:
+
+```
+                    Node stops responding (control plane view)
+                                    │
+              ┌─────────────────────┴─────────────────────┐
+              │                                           │
+     It's a NETWORK DISCONNECT              It's a REAL NODE FAILURE
+     (node alive, pods running)             (hardware died, pods dead)
+              │                                           │
+   Long toleration = GOOD                    Long toleration = BAD
+   Pods keep serving locally.                K8s waits the FULL tolerationSeconds
+   Eviction would be pointless               before rescheduling pods to healthy
+   (scheduler can't reach the                nodes. Recovery time = toleration time.
+   node anyway).                             Native K8s would recover in 300s.
+```
+
+**The control plane CANNOT distinguish these two cases** - both look like "no heartbeat". The choice of tolerationSeconds is a business decision per workload:
+
+| Workload Profile | Suggested tolerationSeconds | Rationale |
+|-----------------|----------------------------|-----------|
+| Stateless, replicas spread across nodes | 300-900 (5-15 min) | Other replicas absorb traffic; fast failover on real failure matters more |
+| Stateful singleton (can't run 2x) | Long (hours) or indefinite | False eviction = split-brain risk; prefer waiting out disconnections |
+| Batch/queue consumers | Short (60-300s) | Work is re-queued anyway; fast rescheduling wins |
+| DC-critical services (the "if AWS dies" case) | Long (hours) + replicas on MULTIPLE nodes | Survive disconnect via toleration; survive node failure via replicas |
+
+**Key insights for the discussion:**
+
+1. **Tolerations are per-pod, not per-cluster.** Each application team tunes its own value based on its business requirements. Caravela can offer profiles (e.g., "resilient" vs "fast-failover") as IDP presets.
+2. **Replicas across nodes reduce the pressure on this decision.** If the app has replicas on 3 nodes, a long toleration costs little: a real single-node failure only degrades capacity, and the disconnection case is fully covered. This combo (long toleration + multi-node replicas) is the recommended pattern for the DC-critical profile.
+3. **Zone labels change the game for FULL-DC disconnects.** If all hybrid nodes carry a `topology.kubernetes.io/zone` label per DC (e.g., `zone=chicago-dc1`), Kubernetes CANCELS evictions when the entire zone is unreachable - even without custom tolerations. Tolerations then only matter for PARTIAL failures (some nodes down, some up). Configure via nodeadm: `--node-labels=topology.kubernetes.io/zone=dc1`.
+4. **The 300s default is not configurable in EKS** (`default-unreachable-toleration-seconds` is control-plane managed). Per-pod tolerations are the only lever - which is fine, because per-app is where this decision belongs.
+
 ### Production Recommendations
 
 | Parameter | Demo | Production |
 |-----------|------|------------|
-| `tolerationSeconds` | 3600 (1h) | Omit (indefinite) or 86400 (24h) |
-| Replicas | 2 | N+2 (absorb load during disconnect) |
-| Zone labels | - | Assign `topology.kubernetes.io/zone` per DC |
-| Local LB | ALB (demo) | MetalLB L2 or F5 (stable during disconnect) |
-| Monitoring | kubectl events | Local Prometheus + ADOT dual-backend |
+| `tolerationSeconds` | 3600 (1h) | Per-workload decision (see trade-off table above) |
+| Replicas | 2 | N+2 across multiple nodes (absorb disconnect AND node failure) |
+| Zone labels | - | `topology.kubernetes.io/zone` per DC (cancels evictions on full-DC disconnect) |
+| Local LB | MetalLB L2 (demo) | F5 + NodePort/Gateway API (customer design) - same concept |
+| Monitoring | kubectl events | Local Prometheus + ADOT dual-backend + NodeNotReady CloudWatch alarm |
 | Troubleshooting | kubectl | `crictl` (works without control plane) |
+
+---
+
+## Static Pods on EKS Hybrid Nodes: Support and Limitations
+
+### Is it supported?
+
+**Yes.** Unlike EKS Managed Node Groups, Fargate, or Auto Mode (where the kubelet is locked down), on Hybrid Nodes **you own the OS and the kubelet is standard upstream Kubernetes**. The `nodeadm` config officially supports arbitrary kubelet configuration via `spec.kubelet.config` ([nodeadm reference](https://docs.aws.amazon.com/eks/latest/userguide/hybrid-nodes-nodeadm.html)):
+
+```yaml
+apiVersion: node.eks.aws/v1alpha1
+kind: NodeConfig
+spec:
+  cluster:
+    name: <CLUSTER_NAME>
+    region: <REGION>
+  kubelet:
+    config:
+      staticPodPath: /etc/kubernetes/manifests   # standard upstream kubelet field
+  hybrid:
+    ssm:
+      activationCode: ...
+      activationId: ...
+```
+
+AWS's own best-practices doc for network disconnections explicitly references static pods as "the only Kubernetes workload object controlled by the kubelet that can be restarted during these scenarios" - acknowledging the pattern, while recommending against it for general application deployments.
+
+### Edge cases and limitations (validate in the dry-run)
+
+| Limitation | Impact | Notes |
+|-----------|--------|-------|
+| **No API object references** | Static pods CANNOT mount ConfigMaps, Secrets, PVCs, or use ServiceAccounts | Only local volumes (hostPath, emptyDir). Config must live on the node's disk. Secrets via files on disk = your hardening responsibility |
+| **No controller management** | No rolling updates, no HPA, no self-healing beyond restart | Updating = editing the manifest file on EVERY node (config drift risk). Automate via SSM/Ansible |
+| **Mirror pod is read-only** | `kubectl delete` on the mirror pod does nothing (kubelet recreates) | Management is per-node, via file |
+| **Image must be local** | If the node restarts and the image was garbage-collected, the pod can't start offline (no ECR access) | Pin images + configure containerd `discard_unpacked_layers=false` + generous GC thresholds |
+| **hostPort conflicts** | hostNetwork pods compete for node ports | Plan port allocation per node |
+| **Service routing after offline restart** | kube-proxy (DaemonSet) doesn't restart offline - ClusterIP/NodePort routing on the restarted node is broken until reconnect | Access static pods via node IP + hostPort directly |
+
+### DR Pattern: Static Pods as "warm standby" (customer idea - analysis)
+
+The idea: run ~25% of app capacity as static pods, and on a node restart during disconnect, redirect traffic to them via NodePort/MetalLB using the pod IPs.
+
+**Assessment: viable, with one correction - the redirect must NOT depend on NodePort/MetalLB.** After an offline restart, kube-proxy and the MetalLB speaker on that node do not come back, so Service-based routing is dead on that node. The redirect needs to target the static pods DIRECTLY (hostNetwork = node IP + fixed hostPort).
+
+**The corrected pattern (works with the customer's F5 design):**
+
+```
+                        F5 (on-prem, static entry point)
+                        │
+          ┌─────────────┴──────────────┐
+          │ Pool 1 (PRIMARY)           │ Pool 2 (DR FALLBACK)
+          │ NodePort 30080 on          │ hostPort 8080 on
+          │ all hybrid nodes           │ all hybrid nodes
+          │ (backed by Deployments)    │ (backed by STATIC pods)
+          │ Priority: high             │ Priority: activates when
+          │                            │ Pool 1 health checks fail
+          └────────────────────────────┴──────────────────────────
+```
+
+- **Normal operation:** F5 routes to Pool 1 (NodePort → Deployment pods). Static pods idle in background (~25% capacity reserved).
+- **Disconnect only (no restart):** Pool 1 keeps working (pods survive via tolerations). Nothing changes.
+- **Disconnect + node restart:** on the restarted node, NodePort dies (kube-proxy down) but the static pod comes back and serves on hostPort. F5 health checks detect Pool 1 failure on that node and shift to Pool 2. **No Kubernetes dependency in the failover decision - pure L4 health checks.**
+- **Reconnection:** Deployments recover, Pool 1 health checks pass, F5 shifts back.
+
+**Caveats to size properly:**
+1. Static pod capacity is RESERVED (running idle) - it's a cost/capacity trade-off, classic warm-standby
+2. Config/secrets for static pods live on node disk - needs config management discipline (SSM Association/Ansible to keep manifests in sync)
+3. Version skew risk: static pod image must be updated in lockstep with the Deployment image (automate in the same pipeline)
+4. Images must be pre-pulled and protected from GC on every node
+5. Test the F5 health-check timings: too aggressive = flapping during brief disconnects; too slow = downtime window
+
+**Verdict:** as a DR palliative for the "AWS region disconnect + node maintenance/failure" combo, the pattern is sound and aligns with the F5 + NodePort design the customer already chose. It should complement (not replace) multi-node replicas - replicas remain the first line of defense.
 
 ---
 
