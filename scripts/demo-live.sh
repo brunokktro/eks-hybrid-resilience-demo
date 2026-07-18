@@ -57,7 +57,7 @@ scenario_0() {
 
   step "Tolerations on the hybrid deployment"
   explain "These tolerations are what keep pods alive during disconnection"
-  run_cmd "kubectl get deploy podinfo-hybrid -n ${NAMESPACE} -o jsonpath='{.spec.template.spec.tolerations}' | jq '.'"
+  run_cmd "kubectl get deploy server-hybrid-1 -n ${NAMESPACE} -o jsonpath='{.spec.template.spec.tolerations}' | jq '.'"
   echo ""
   explain "Without tolerations: pods evicted after 300s (5 min, Kubernetes default)"
   explain "With our config: pods survive for 3600s (1h). Production: omit tolerationSeconds for indefinite."
@@ -131,17 +131,19 @@ scenario_1() {
   run_cmd "kubectl get pods -n ${NAMESPACE} -l location=hybrid -o wide"
   pause
 
-  step "Both clients actively calling podinfo-hybrid every 5s"
-  explain "client-hybrid (LOCAL): on-prem → on-prem (same node)"
+  step "All 3 clients actively calling their targets every 5s"
+  explain "client-hybrid (LOCAL): Node 1 → Node 1 (same node)"
   run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-hybrid --tail=3"
-  explain "client-cloud (CROSS-CLUSTER): cloud → on-prem (via VXLAN)"
-  run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-cloud --tail=3"
+  explain "client-hybrid-to-hybrid (CROSS-NODE): Node 1 → Node 2 (on-prem mesh)"
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-hybrid-to-hybrid --tail=3"
+  explain "client-cloud-to-hybrid (CROSS-CLUSTER): cloud → on-prem (via VPN)"
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-cloud-to-hybrid --tail=3"
   pause
 
   step "Injecting network fault..."
   echo ""
   if [[ -n "$FIS_TEMPLATE_ID" ]]; then
-    explain "Using AWS FIS to block traffic to on-premises CIDRs on Gateway Nodes"
+    explain "Using AWS FIS disrupt-connectivity: NACL deny rules on cluster subnets"
     explain "This simulates: 'the network link between AWS and the datacenter went down'"
     echo ""
     FIS_EXP_ID=$(aws fis start-experiment \
@@ -186,20 +188,24 @@ scenario_1() {
     sleep 10
   done
 
-  step "Node is NotReady. Checking BOTH clients:"
+  step "Node is NotReady. Checking ALL 3 clients:"
   echo ""
-  echo -e "  ${GREEN}${BOLD}client-hybrid (LOCAL - on-prem → on-prem):${NC}"
+  echo -e "  ${GREEN}${BOLD}client-hybrid (LOCAL - Node 1 → Node 1):${NC}"
   run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-hybrid --tail=5"
-  echo -e "  ${RED}${BOLD}client-cloud (CROSS-CLUSTER - cloud → on-prem):${NC}"
-  run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-cloud --tail=5"
+  echo -e "  ${GREEN}${BOLD}client-hybrid-to-hybrid (CROSS-NODE - Node 1 → Node 2):${NC}"
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-hybrid-to-hybrid --tail=5"
+  echo -e "  ${RED}${BOLD}client-cloud-to-hybrid (CROSS-CLUSTER - cloud → on-prem):${NC}"
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-cloud-to-hybrid --tail=5"
 
   echo ""
   echo -e "  ${GREEN}${BOLD}━━━ THE CONTRAST IS THE PROOF ━━━${NC}"
   echo ""
-  explain "client-hybrid: STATUS=200 (uninterrupted - local processing continues)"
-  explain "client-cloud:  STATUS=TIMEOUT (expected - link is down)"
+  explain "client-hybrid (local):            200 ✓ uninterrupted"
+  explain "client-hybrid-to-hybrid (x-node): 200 ✓ uninterrupted (on-prem mesh has no AWS dependency)"
+  explain "client-cloud-to-hybrid (x-cluster): TIMEOUT ✗ expected - link is down"
   explain ""
-  explain "This proves: the DATACENTER keeps operating independently."
+  explain "This proves: the DATACENTER keeps operating independently,"
+  explain "including communication BETWEEN on-prem nodes (production topology)."
   explain "Only the cross-cluster link is affected. Local workloads are immune."
   pause
 }
@@ -210,7 +216,7 @@ scenario_2() {
 
   step "Network is still disconnected (from scenario 1)"
   step "Continuous client STILL logging 200s (existing pods unaffected):"
-  run_cmd "kubectl logs -n ${NAMESPACE} deploy/continuous-client --tail=3"
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-hybrid --tail=3"
   explain "Let's try to scale the deployment from 2 to 4 replicas"
   pause
 
@@ -229,7 +235,7 @@ scenario_2() {
   echo ""
 
   step "Proof: existing pods still processing during this entire time:"
-  run_cmd "kubectl logs -n ${NAMESPACE} deploy/continuous-client --tail=3"
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-hybrid --tail=3"
 
   echo ""
   echo -e "  ${YELLOW}${BOLD}━━━ KNOWN LIMITATION ━━━${NC}"

@@ -20,8 +20,8 @@ graph TB
         subgraph VPC["VPC 10.43.0.0/16"]
             ALB["ALB<br/>(internet-facing)"]
             subgraph CloudNodes["Cloud Nodes (EC2)"]
-                PC["podinfo-cloud<br/>(comparison)"]
-                CC["client-cloud<br/>→ podinfo-hybrid"]
+                PC["server-cloud<br/>(comparison)"]
+                CC["client-cloud-to-hybrid<br/>→ server-hybrid-1"]
             end
             subgraph GatewayNodes["Gateway Nodes (t3.large)"]
                 GW["Hybrid Node Gateway<br/>(VXLAN endpoint)"]
@@ -32,12 +32,12 @@ graph TB
 
     subgraph OnPrem["On-Premises (vSphere Datacenter)"]
         subgraph HN1["Hybrid Node 1 (VM #1 - 192.168.3.51)"]
-            PH1["podinfo-hybrid<br/>(SERVER, 2 replicas)"]
+            PH1["server-hybrid-1<br/>(SERVER, 2 replicas)"]
             CH["client-hybrid<br/>→ local server"]
-            CXN["client-cross-node<br/>→ Node 2 server"]
+            CXN["client-hybrid-to-hybrid<br/>→ server-hybrid-2"]
         end
         subgraph HN2["Hybrid Node 2 (VM #2 - 192.168.3.52)"]
-            PH2["podinfo-node2<br/>(SERVER)"]
+            PH2["server-hybrid-2<br/>(SERVER)"]
         end
         VPN_EP["VPN Endpoint<br/>(pfSense)"]
     end
@@ -340,7 +340,20 @@ terraform apply \
 #   ssm_document_name = "demo-stone-network-blackhole-cidr"
 ```
 
-### Step 2: Deploy Servers and Clients
+### Step 2: Label the Hybrid Nodes (REQUIRED before deploying)
+
+The manifests use `nodeSelector: hybrid-node-id` to pin pods to specific nodes. Label BEFORE deploying:
+
+```bash
+# List your hybrid nodes
+kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
+
+# Label them (adjust node names)
+kubectl label node <FIRST_HYBRID_NODE> hybrid-node-id=node1
+kubectl label node <SECOND_HYBRID_NODE> hybrid-node-id=node2
+```
+
+### Step 3: Deploy Servers and Clients
 
 ```bash
 # Deploy all servers
@@ -355,7 +368,7 @@ kubectl apply -f manifests/04-clients.yaml
 kubectl get pods -n demo-stone -o wide
 ```
 
-### Step 3: Create ALB Ingress
+### Step 4: Create ALB Ingress
 
 ```bash
 # Deploy the ALB ingress
@@ -375,68 +388,60 @@ echo "ALB ready: http://${ALB}/"
 curl -s "http://${ALB}/" | jq '{hostname, message}'
 ```
 
-### Step 4: Deploy Cross-Node Communication Test (requires 2 hybrid nodes)
+> **Dry-run validation note:** ALB with `target-type: ip` registers the remote pod IPs (10.201.x.x) as targets. This requires the VPC route tables to have routes to the RemotePodNetwork (handled by the Hybrid Nodes Gateway) and the target group health checks to pass over that path. Validate target health before the customer call: `aws elbv2 describe-target-health --target-group-arn <TG_ARN>`.
 
-This is the closest to production: microservices distributed across multiple on-prem nodes, communicating via Cilium VXLAN mesh independently of AWS.
+### Provisioning the Second Hybrid Node (if you only have one)
+
+The cross-node test requires TWO hybrid nodes. Create a **NEW VM** in vCenter - do NOT clone the existing one:
 
 ```bash
-# Prerequisites: TWO hybrid nodes registered in the cluster.
-# If you only have one, create a NEW VM in vCenter (do NOT clone the existing one
-# as it has nodeadm binaries and SSM identity already configured for the first node):
-#
-#   1. Create a fresh Ubuntu 24.04 VM in vCenter (same network, same datastore)
-#   2. Assign a different IP in the same subnet (e.g., 192.168.3.52)
-#   3. Install nodeadm: curl -Lo /usr/local/bin/nodeadm <url> && chmod +x
-#   4. Create a NEW SSM Hybrid Activation (or reuse if registration-limit allows)
-#   5. Run: sudo nodeadm init --config nodeConfig.yaml
-#   6. Wait for it to join: kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
-#
-# Why NOT clone: the existing VM has SSM agent identity (mi-XXXX) and nodeadm state
-# configured for the cluster. Cloning duplicates that identity causing conflicts.
-# A fresh VM gets its own mi-YYYYY identity and clean nodeadm init.
+# Why NOT clone: the existing VM has SSM agent identity (mi-XXXX) and nodeadm
+# state configured for the cluster. Cloning duplicates that identity, causing
+# conflicts. A fresh VM gets its own mi-YYYYY identity and a clean nodeadm init.
 
-# Label the nodes to differentiate them
-kubectl label node <FIRST_HYBRID_NODE> hybrid-node-id=node1
-kubectl label node <SECOND_HYBRID_NODE> hybrid-node-id=node2
+# 1. Create a fresh Ubuntu 24.04 VM in vCenter (same network, same datastore)
+# 2. Assign a different IP in the same subnet (e.g., 192.168.3.52)
+# 3. Install nodeadm:
+curl -Lo /usr/local/bin/nodeadm \
+  "https://hybrid-assets.eks.amazonaws.com/releases/latest/bin/linux/amd64/nodeadm"
+chmod +x /usr/local/bin/nodeadm
 
-# Deploy servers and cross-node test
-kubectl apply -f manifests/02-server-hybrid-2.yaml
+# 4. Create a NEW SSM Hybrid Activation (or reuse if registration-limit allows)
+aws ssm create-activation \
+  --iam-role <HYBRID_NODE_ROLE_NAME> \
+  --registration-limit 2 \
+  --region <REGION>
 
-# Verify placement
-kubectl get pods -n demo-stone -o wide | grep hybrid
-# server-hybrid-2-xxxxx            1/1    Running  mi-YYYYYYYY (Node 2)
-# client-hybrid-to-hybrid-xxxxx    1/1    Running  mi-XXXXXXXX (Node 1)
-
-# Verify cross-node communication works
-kubectl logs -n demo-stone deploy/client-hybrid-to-hybrid --tail=5
-# [09:15:10] #1 CROSS-NODE → server-hybrid-2 | 200 ✓
+# 5. On the VM: sudo nodeadm init --config nodeConfig.yaml
+# 6. Wait for it to join:
+kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
 ```
 
-**Updated pod topology with 2 hybrid nodes:**
+**Pod topology with 2 hybrid nodes:**
 
 ```
-┌─ Hybrid Node 1 (vSphere VM #1, 192.168.3.51) ──────────────────────┐
-│                                                                      │
-│  [podinfo-hybrid]    ← SERVER (2 replicas)                           │
-│  [client-hybrid]     ← CLIENT → podinfo-hybrid (local, same node)   │
-│  [client-cross-node] ← CLIENT → podinfo-node2 (cross-node, Node 2)  │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
+┌─ Hybrid Node 1 (vSphere VM #1, 192.168.3.51) ─────────────────────────────┐
+│                                                                             │
+│  [server-hybrid-1]        ← SERVER (2 replicas)                             │
+│  [client-hybrid]          ← CLIENT → server-hybrid-1 (local, same node)     │
+│  [client-hybrid-to-hybrid]← CLIENT → server-hybrid-2 (cross-node, Node 2)  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
             │                                    ▲
             │        Cilium VXLAN (on-prem)       │
             ▼                                    │
-┌─ Hybrid Node 2 (vSphere VM #2, 192.168.3.52) ──────────────────────┐
-│                                                                      │
-│  [podinfo-node2]     ← SERVER (target for cross-node test)           │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
+┌─ Hybrid Node 2 (vSphere VM #2, 192.168.3.52) ─────────────────────────────┐
+│                                                                             │
+│  [server-hybrid-2]        ← SERVER (target for cross-node test)             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 
-┌─ AWS Cloud (EC2 Nodes) ─────────────────────────────────────────────┐
-│                                                                      │
-│  [podinfo-cloud]     ← SERVER (comparison)                           │
-│  [client-cloud]      ← CLIENT → podinfo-hybrid (cross-cluster)      │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
+┌─ Amazon EKS (AWS Region) ──────────────────────────────────────────────────┐
+│                                                                             │
+│  [server-cloud]           ← SERVER (comparison)                             │
+│  [client-cloud-to-hybrid] ← CLIENT → server-hybrid-1 (cross-cluster)       │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Step 5: Run the Demo
@@ -470,7 +475,7 @@ chmod +x scripts/demo-live.sh
 
 3. **Tolerations configured** - explain WHY they exist:
    ```bash
-   kubectl get deploy podinfo-hybrid -n demo-stone -o yaml | grep -A 10 tolerations
+   kubectl get deploy server-hybrid-1 -n demo-stone -o yaml | grep -A 10 tolerations
    ```
 
 4. **Key talking point:**
@@ -586,8 +591,8 @@ kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
 
 # BUT pods remain Running (tolerations prevent eviction)
 kubectl get pods -n demo-stone -l tier=hybrid -o wide
-# podinfo-hybrid-xxxxx   1/1   Running   mi-0ee2ff775b4369c29
-# podinfo-hybrid-xxxxx   1/1   Running   mi-0ee2ff775b4369c29
+# server-hybrid-1-xxxxx   1/1   Running   mi-0ee2ff775b4369c29
+# server-hybrid-1-xxxxx   1/1   Running   mi-0ee2ff775b4369c29
 # client-hybrid-xxxxx    1/1   Running   mi-0ee2ff775b4369c29
 ```
 
@@ -639,7 +644,7 @@ kubectl logs -n demo-stone deploy/client-cloud-to-hybrid --tail=2
 | Path | Status | Why |
 |------|--------|-----|
 | client-hybrid (same node) | ✓ STATUS=200 | Cilium eBPF datapath, local |
-| client-cross-node (Node 1 → Node 2) | ✓ STATUS=200 | Cilium VXLAN over local LAN, independent of AWS |
+| client-hybrid-to-hybrid (Node 1 → Node 2) | ✓ STATUS=200 | Cilium VXLAN over local LAN, independent of AWS |
 | client-cloud (Cloud → Node 1) | ✗ TIMEOUT | Path traverses the broken VPN link |
 
 **Key talking point:**
@@ -720,10 +725,10 @@ kubectl logs -n demo-stone deploy/client-hybrid --tail=3
 **What the customer sees in client-cloud terminal (the "aha" moment):**
 
 ```
-[09:30:15] #240 → podinfo-hybrid | STATUS=TIMEOUT ✗ link down
-[09:30:20] #241 → podinfo-hybrid | STATUS=TIMEOUT ✗ link down
-[09:30:25] #242 → podinfo-hybrid | STATUS=200 ✓ cross-cluster OK    ← AUTO-HEALED!
-[09:30:30] #243 → podinfo-hybrid | STATUS=200 ✓ cross-cluster OK
+[09:30:15] #240 CROSS-CLUSTER → server-hybrid-1 | TIMEOUT ✗
+[09:30:20] #241 CROSS-CLUSTER → server-hybrid-1 | TIMEOUT ✗
+[09:30:25] #242 CROSS-CLUSTER → server-hybrid-1 | 200 ✓    ← AUTO-HEALED!
+[09:30:30] #243 CROSS-CLUSTER → server-hybrid-1 | 200 ✓
 ```
 
 ```bash
@@ -810,12 +815,20 @@ tolerations:
 
 ## Fault Injection Strategy
 
-### Method 1: AWS FIS + Custom SSM Document (AWS-side disruption)
+### Method 1: AWS FIS + Network Disrupt Connectivity (AWS-side disruption)
 
-The Terraform in this repo creates a custom SSM document that uses iptables to block traffic to specific CIDRs, simulating a network link failure from the AWS side. This is more realistic than port-based blackhole for this use case.
+The Terraform in this repo uses the native FIS action `aws:network:disrupt-connectivity` with `scope=prefix-list`. FIS injects temporary Network ACL rules on the **EKS cluster subnets** that deny all traffic to/from the on-premises CIDRs (via a managed prefix list).
+
+**Why target the subnets and not the Gateway Nodes?** The kubelet heartbeat path (hybrid node → EKS API endpoint) does NOT traverse the Gateway Nodes - it goes directly through the VPN into the cluster VPC. A blackhole on Gateway Nodes only breaks pod-to-pod traffic, and the node would never become NotReady. Targeting the subnets blocks BOTH paths:
+
+| Path | Blocked by subnet NACL |
+|------|------------------------|
+| EKS control plane → kubelet (heartbeat) | ✓ node goes NotReady |
+| Gateway Nodes → on-prem pods (VXLAN) | ✓ cross-cluster traffic fails |
+| ALB → internet clients | ✗ NOT affected (surgical fault) |
 
 ```bash
-# Start the experiment
+# Start the experiment (5 min duration, auto-reverts)
 aws fis start-experiment \
   --experiment-template-id <TEMPLATE_ID> \
   --region <REGION>
@@ -824,7 +837,8 @@ aws fis start-experiment \
 aws fis get-experiment --id <EXPERIMENT_ID> --region <REGION> \
   --query 'experiment.state.{status:status,reason:reason}'
 
-# FIS auto-reverts after the configured duration (default: 5 minutes)
+# Stop early if needed (FIS restores the NACLs automatically)
+aws fis stop-experiment --id <EXPERIMENT_ID> --region <REGION>
 ```
 
 ### Method 2: vCenter/Hypervisor (DC-side disruption)

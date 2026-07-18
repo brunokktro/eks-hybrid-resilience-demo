@@ -1,15 +1,29 @@
 # FIS Infrastructure for EKS Hybrid Nodes Resilience Demo
 #
 # Creates:
-#   1. Custom SSM Document - Network blackhole by CIDR (iptables-based)
-#   2. FIS IAM Role
-#   3. FIS Experiment Template
+#   1. Customer-managed Prefix List with the on-premises CIDRs
+#   2. FIS IAM Role (with AWSFaultInjectionSimulatorNetworkAccess)
+#   3. FIS Experiment Template using aws:network:disrupt-connectivity
 #   4. CloudWatch Log Group
 #
-# Why custom SSM Document?
-#   AWS provides AWSFIS-Run-Network-Blackhole-Port (blocks by port),
-#   but NOT a pre-built document for blocking by destination CIDR.
-#   Our use case needs to block traffic to specific on-premises CIDRs.
+# HOW THE FAULT WORKS:
+#   The aws:network:disrupt-connectivity action (scope=prefix-list) injects
+#   temporary Network ACL rules on the TARGET SUBNETS that DENY all traffic
+#   to/from the CIDRs in the prefix list (the on-premises networks).
+#
+#   Targeting the EKS cluster subnets blocks:
+#     - EKS control plane ENIs → hybrid node kubelet   (node goes NotReady)
+#     - Gateway Nodes → on-prem VXLAN                  (pod-to-pod cross-cluster fails)
+#
+#   This correctly simulates "the link between AWS and the datacenter is down"
+#   affecting BOTH the control plane path and the data path.
+#
+#   NOTE: A blackhole applied on the Gateway Nodes only (previous design) would
+#   NOT make the node NotReady, because the kubelet heartbeat path
+#   (hybrid node → EKS API endpoint) does not traverse the Gateway Nodes.
+#
+# The fault auto-reverts after `fault_duration_seconds`. FIS restores the
+# original network ACLs automatically (also on manual stop-experiment).
 #
 # Usage:
 #   terraform init
@@ -44,21 +58,21 @@ variable "cluster_name" {
 }
 
 variable "onprem_node_cidr" {
-  description = "On-premises node CIDR to block (simulates link failure)"
+  description = "On-premises node CIDR (RemoteNodeNetwork)"
   type        = string
   default     = "192.168.3.0/24"
 }
 
 variable "remote_pod_cidr" {
-  description = "Remote pod CIDR to block"
+  description = "On-premises pod CIDR (RemotePodNetwork)"
   type        = string
   default     = "10.201.0.0/16"
 }
 
-variable "fault_duration_seconds" {
-  description = "Duration of the network fault in seconds"
+variable "fault_duration_minutes" {
+  description = "Duration of the network fault in minutes (FIS auto-reverts after this)"
   type        = number
-  default     = 300 # 5 minutes
+  default     = 5
 }
 
 # ─── Data Sources ─────────────────────────────────────────────────────────────
@@ -66,9 +80,15 @@ variable "fault_duration_seconds" {
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
+# Discover the EKS cluster subnets automatically
+data "aws_eks_cluster" "this" {
+  name = var.cluster_name
+}
+
 locals {
   account_id = data.aws_caller_identity.current.account_id
-  name       = "demo-stone"
+  name       = "hybrid-resilience-demo"
+  subnet_ids = data.aws_eks_cluster.this.vpc_config[0].subnet_ids
   tags = {
     Project       = "hybrid-resilience-demo"
     Environment   = "demo"
@@ -77,71 +97,22 @@ locals {
   }
 }
 
-# ─── Custom SSM Document (Network Blackhole by CIDR) ──────────────────────────
+# ─── Prefix List with On-Premises CIDRs ──────────────────────────────────────
 
-resource "aws_ssm_document" "network_blackhole_cidr" {
-  name            = "${local.name}-network-blackhole-cidr"
-  document_type   = "Command"
-  document_format = "YAML"
+resource "aws_ec2_managed_prefix_list" "onprem" {
+  name           = "${local.name}-onprem-cidrs"
+  address_family = "IPv4"
+  max_entries    = 5
 
-  content = yamlencode({
-    schemaVersion = "2.2"
-    description   = "Blocks network traffic to specified CIDRs using iptables. Auto-reverts after duration."
-    parameters = {
-      DurationSeconds = {
-        type        = "String"
-        description = "Duration in seconds to maintain the blackhole"
-        default     = tostring(var.fault_duration_seconds)
-      }
-      DestinationCIDRs = {
-        type        = "String"
-        description = "Comma-separated list of destination CIDRs to block"
-        default     = "${var.onprem_node_cidr},${var.remote_pod_cidr}"
-      }
-    }
-    mainSteps = [
-      {
-        action = "aws:runShellScript"
-        name   = "InjectNetworkBlackhole"
-        inputs = {
-          runCommand = [
-            "#!/bin/bash",
-            "set -e",
-            "",
-            "DURATION=\"{{ DurationSeconds }}\"",
-            "CIDRS=\"{{ DestinationCIDRs }}\"",
-            "CHAIN_NAME=\"FIS_BLACKHOLE\"",
-            "",
-            "echo \"[FIS] Starting network blackhole for $${DURATION}s targeting: $${CIDRS}\"",
-            "",
-            "# Create dedicated iptables chain for clean rollback",
-            "iptables -N $${CHAIN_NAME} 2>/dev/null || iptables -F $${CHAIN_NAME}",
-            "iptables -C FORWARD -j $${CHAIN_NAME} 2>/dev/null || iptables -I FORWARD 1 -j $${CHAIN_NAME}",
-            "",
-            "# Block each CIDR",
-            "IFS=',' read -ra CIDR_ARRAY <<< \"$${CIDRS}\"",
-            "for CIDR in \"$${CIDR_ARRAY[@]}\"; do",
-            "  CIDR=$(echo $${CIDR} | tr -d ' ')",
-            "  echo \"[FIS] Blocking traffic to $${CIDR}\"",
-            "  iptables -A $${CHAIN_NAME} -d $${CIDR} -j DROP",
-            "  iptables -A $${CHAIN_NAME} -s $${CIDR} -j DROP",
-            "done",
-            "",
-            "echo \"[FIS] Blackhole active. Sleeping for $${DURATION}s...\"",
-            "sleep $${DURATION}",
-            "",
-            "# Rollback: flush and remove chain",
-            "echo \"[FIS] Duration elapsed. Removing blackhole rules...\"",
-            "iptables -D FORWARD -j $${CHAIN_NAME} 2>/dev/null || true",
-            "iptables -F $${CHAIN_NAME} 2>/dev/null || true",
-            "iptables -X $${CHAIN_NAME} 2>/dev/null || true",
-            "",
-            "echo \"[FIS] Network blackhole removed. Traffic restored.\""
-          ]
-        }
-      }
-    ]
-  })
+  entry {
+    cidr        = var.onprem_node_cidr
+    description = "On-premises node network (RemoteNodeNetwork)"
+  }
+
+  entry {
+    cidr        = var.remote_pod_cidr
+    description = "On-premises pod network (RemotePodNetwork)"
+  }
 
   tags = local.tags
 }
@@ -172,8 +143,14 @@ resource "aws_iam_role" "fis" {
   tags = local.tags
 }
 
-resource "aws_iam_role_policy" "fis" {
-  name = "${local.name}-fis-policy"
+# AWS managed policy for FIS network actions (includes NACL manipulation)
+resource "aws_iam_role_policy_attachment" "fis_network" {
+  role       = aws_iam_role.fis.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSFaultInjectionSimulatorNetworkAccess"
+}
+
+resource "aws_iam_role_policy" "fis_logs" {
+  name = "${local.name}-fis-logs"
   role = aws_iam_role.fis.id
 
   policy = jsonencode({
@@ -182,30 +159,12 @@ resource "aws_iam_role_policy" "fis" {
       {
         Effect = "Allow"
         Action = [
-          "ec2:DescribeInstances",
-          "ec2:DescribeTags"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ssm:SendCommand",
-          "ssm:ListCommands",
-          "ssm:ListCommandInvocations",
-          "ssm:GetCommandInvocation",
-          "ssm:CancelCommand"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
-          "logs:PutLogEvents"
+          "logs:PutLogEvents",
+          "logs:DescribeLogGroups"
         ]
-        Resource = "arn:aws:logs:${data.aws_region.current.name}:${local.account_id}:log-group:/fis/*"
+        Resource = "arn:aws:logs:${data.aws_region.current.region}:${local.account_id}:log-group:/fis/*"
       }
     ]
   })
@@ -220,9 +179,11 @@ resource "aws_cloudwatch_log_group" "fis" {
 }
 
 # ─── FIS Experiment Template ─────────────────────────────────────────────────
+# aws:network:disrupt-connectivity (scope=prefix-list) on the EKS cluster subnets.
+# Denies all traffic to/from on-prem CIDRs = simulates AWS↔DC link failure.
 
 resource "aws_fis_experiment_template" "network_disconnect" {
-  description = "Block network to on-prem CIDRs via iptables on Gateway Nodes (simulates AWS-side link failure)"
+  description = "Block all traffic between AWS and on-premises CIDRs (simulates hybrid link failure)"
   role_arn    = aws_iam_role.fis.arn
 
   stop_condition {
@@ -230,46 +191,38 @@ resource "aws_fis_experiment_template" "network_disconnect" {
   }
 
   target {
-    name           = "gateway-nodes"
-    resource_type  = "aws:ec2:instance"
+    name           = "cluster-subnets"
+    resource_type  = "aws:ec2:subnet"
     selection_mode = "ALL"
 
-    resource_tag {
-      key   = "hybrid-gateway-node"
-      value = "true"
-    }
-
-    resource_tag {
-      key   = "eks:cluster-name"
-      value = var.cluster_name
-    }
+    resource_arns = [
+      for subnet_id in local.subnet_ids :
+      "arn:aws:ec2:${data.aws_region.current.region}:${local.account_id}:subnet/${subnet_id}"
+    ]
   }
 
   action {
-    name      = "network-blackhole-to-onprem"
-    action_id = "aws:ssm:send-command"
+    name      = "disrupt-onprem-connectivity"
+    action_id = "aws:network:disrupt-connectivity"
 
     parameter {
       key   = "duration"
-      value = "PT${ceil(var.fault_duration_seconds / 60) + 2}M" # Action duration > script duration
+      value = "PT${var.fault_duration_minutes}M"
     }
 
     parameter {
-      key   = "documentArn"
-      value = aws_ssm_document.network_blackhole_cidr.arn
+      key   = "scope"
+      value = "prefix-list"
     }
 
     parameter {
-      key   = "documentParameters"
-      value = jsonencode({
-        DurationSeconds  = tostring(var.fault_duration_seconds)
-        DestinationCIDRs = "${var.onprem_node_cidr},${var.remote_pod_cidr}"
-      })
+      key   = "prefixListIdentifier"
+      value = aws_ec2_managed_prefix_list.onprem.id
     }
 
     target {
-      key   = "Instances"
-      value = "gateway-nodes"
+      key   = "Subnets"
+      value = "cluster-subnets"
     }
   }
 
@@ -290,9 +243,14 @@ output "fis_experiment_template_id" {
   value       = aws_fis_experiment_template.network_disconnect.id
 }
 
-output "ssm_document_name" {
-  description = "Custom SSM document name for network blackhole"
-  value       = aws_ssm_document.network_blackhole_cidr.name
+output "prefix_list_id" {
+  description = "Managed prefix list with on-premises CIDRs"
+  value       = aws_ec2_managed_prefix_list.onprem.id
+}
+
+output "target_subnets" {
+  description = "EKS cluster subnets targeted by the experiment"
+  value       = local.subnet_ids
 }
 
 output "fis_role_arn" {
