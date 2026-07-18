@@ -309,6 +309,9 @@ kubectl apply -f manifests/01-podinfo-hybrid.yaml
 # Deploy podinfo on cloud nodes (for comparison)
 kubectl apply -f manifests/02-podinfo-cloud.yaml
 
+# Deploy continuous client (proves processing continues during disconnect)
+kubectl apply -f manifests/04-continuous-client.yaml
+
 # Verify all pods are running
 kubectl get pods -n demo-stone -o wide
 
@@ -318,7 +321,14 @@ kubectl get pods -n demo-stone -o wide
 # podinfo-hybrid-xxxxx              1/1     Running   mi-0xxxxxxxxx (hybrid)
 # podinfo-cloud-xxxxx               1/1     Running   ip-10-43-xx (cloud)
 # podinfo-cloud-xxxxx               1/1     Running   ip-10-43-xx (cloud)
+# continuous-client-xxxxx           1/1     Running   mi-0xxxxxxxxx (hybrid)
 # curl-cloud                        1/1     Running   ip-10-43-xx (cloud)
+
+# Verify continuous client is producing logs
+kubectl logs -n demo-stone deploy/continuous-client --tail=5
+# [09:15:10] #1 STATUS=200 OK - pod is processing
+# [09:15:15] #2 STATUS=200 OK - pod is processing
+# ...
 ```
 
 ### Step 3: Create ALB Ingress
@@ -429,7 +439,15 @@ kubectl exec -n demo-stone deploy/podinfo-hybrid -- \
 
 **This is the core of the demo.**
 
-#### Step 1: Start the FIS experiment
+#### Step 1: Start the continuous client log (open a dedicated terminal)
+
+```bash
+# This terminal stays visible during the entire disconnect test.
+# The customer sees: requests succeeding every 5s, proving ACTIVE processing.
+kubectl logs -n demo-stone deploy/continuous-client -f
+```
+
+#### Step 2: Start the FIS experiment
 
 ```bash
 # Option A: FIS (recommended - shows the AWS service)
@@ -442,66 +460,87 @@ aws fis start-experiment \
 # In vCenter UI: VM → Edit Settings → Network Adapter 1 → Disconnect
 ```
 
-#### Step 2: Watch the node transition (open in a separate terminal)
+#### Step 3: Watch the node transition (second terminal)
 
 ```bash
-# Watch node status (heartbeat stops after ~10s, NotReady after ~40s)
-watch -n 5 'kubectl get nodes -o wide; echo "---"; kubectl get pods -n demo-stone -o wide'
+# Watch node status - heartbeat stops after ~10s, NotReady after ~40s
+watch -n 5 'kubectl get nodes -o wide'
 ```
 
-#### Step 3: Show events
+#### Step 4: Prove processing continues
 
 ```bash
-kubectl get events -n demo-stone --watch --sort-by='.lastTimestamp'
+# Back in the continuous-client log terminal, the customer sees:
+# [09:20:10] #120 STATUS=200 OK - pod is processing
+# [09:20:15] #121 STATUS=200 OK - pod is processing   ← AFTER disconnect
+# [09:20:20] #122 STATUS=200 OK - pod is processing
+# ...
+#
+# The key visual: STATUS=200 keeps appearing even after the node goes NotReady.
+# This is LOCAL pod-to-pod communication (same node), unaffected by AWS disconnect.
 ```
 
-**What the customer will see:**
-1. ~10s: Node lease stops being renewed
-2. ~40s: `node-lifecycle-controller` marks node as `NotReady`
-3. ~40s: Taint `node.kubernetes.io/unreachable:NoExecute` added
-4. Pods remain `Running` (NOT evicted) because of tolerations
+#### Step 5: Show node status vs pod status
 
-**Talking point:**
-> "The node is now unreachable from the control plane's perspective.
-> Kubernetes added the 'unreachable' taint. Normally this would evict pods
-> in 5 minutes (300s default). But our tolerations override this -
-> pods survive indefinitely (or for 1 hour in this demo config).
->
-> The key insight: the pods are STILL RUNNING on-premises. Only the
-> control plane lost contact. The workload itself is unaffected.
-> This is exactly the behavior Caravela needs."
+```bash
+# Node is NotReady (no heartbeat to control plane)
+kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
+# NAME                    STATUS     ROLES   AGE
+# mi-0ee2ff775b4369c29    NotReady   <none>  40d
+
+# BUT pods remain Running (tolerations prevent eviction)
+kubectl get pods -n demo-stone -l tier=hybrid -o wide
+# NAME                              READY   STATUS    NODE
+# podinfo-hybrid-xxxxx              1/1     Running   mi-0ee2ff775b4369c29
+# podinfo-hybrid-xxxxx              1/1     Running   mi-0ee2ff775b4369c29
+# continuous-client-xxxxx           1/1     Running   mi-0ee2ff775b4369c29
+```
+
+**Key talking points:**
+- The node is marked NotReady because the kubelet can't send heartbeats
+- The `unreachable:NoExecute` taint was added by the node-lifecycle-controller
+- Pods survive because of the tolerations (without them: eviction in 5 min)
+- **Most importantly:** the continuous client proves the pods are ACTIVELY PROCESSING, not just showing a stale status
+- Pod-to-pod communication via Cilium datapath continues locally (VXLAN encap is local to the node)
 
 ---
 
 ### Phase 4: Disconnect During Provisioning (10 min)
 
-**While still disconnected:**
+**While still disconnected, and continuous-client still logging 200s:**
+
+#### Step 1: Attempt to scale
 
 ```bash
-# Try to scale the deployment from 2 to 4 replicas
+# Try to add 2 more replicas
 kubectl scale deploy podinfo-hybrid -n demo-stone --replicas=4
-
-# Wait 15s then check
-sleep 15
-kubectl get pods -n demo-stone -o wide | grep hybrid
 ```
 
-**What the customer will see:**
-- 2 pods remain `Running` (the existing ones)
-- 2 new pods are `Pending` (scheduler can't reach the hybrid node)
+#### Step 2: Observe the result (wait 15 seconds)
 
-**Talking point:**
-> "This is the known limitation. During disconnection, NEW scheduling
-> decisions cannot be made because they require the kube-api-server.
-> This means:
-> - New pods: Pending
-> - ConfigMap/Secret updates: not propagated
-> - HPA/VPA scaling: not triggered
->
-> BUT: existing pods continue serving traffic.
->
-> The mitigation: size your initial replica count for the load you expect
-> during a disconnection (N+1 or N+2 for critical workloads)."
+```bash
+kubectl get pods -n demo-stone -l tier=hybrid -o wide
+# NAME                              READY   STATUS    NODE
+# podinfo-hybrid-xxxxx              1/1     Running   mi-0ee2ff775b4369c29
+# podinfo-hybrid-xxxxx              1/1     Running   mi-0ee2ff775b4369c29
+# podinfo-hybrid-yyyyy              0/1     Pending   <none>     ← NEW - can't schedule
+# podinfo-hybrid-zzzzz              0/1     Pending   <none>     ← NEW - can't schedule
+# continuous-client-xxxxx           1/1     Running   mi-0ee2ff775b4369c29
+```
+
+#### Step 3: Show the events
+
+```bash
+kubectl get events -n demo-stone --sort-by='.lastTimestamp' | tail -5
+# ... FailedScheduling: 0/3 nodes are available: 1 node(s) were unreachable...
+```
+
+**Key talking points:**
+- Existing pods (2 Running + continuous-client): **still processing**, unaffected
+- New pods: Pending because the scheduler can't reach the hybrid node
+- This is a control plane limitation, NOT a workload limitation
+- Mitigation: pre-size replicas for the expected load during disconnection (N+1 or N+2)
+- The continuous-client log keeps showing 200s - **proof that existing work is uninterrupted**
 
 ---
 
@@ -661,11 +700,12 @@ aws eks update-nodegroup-config \
 
 ```
 eks-hybrid-resilience-demo/
-├── README.md                           # This document
+├── README.md                           # This document (full execution guide)
 ├── manifests/
 │   ├── 01-podinfo-hybrid.yaml          # Podinfo on Hybrid Nodes (with tolerations)
 │   ├── 02-podinfo-cloud.yaml           # Podinfo on Cloud Nodes (comparison)
-│   └── 03-ingress-alb.yaml            # ALB Ingress configuration
+│   ├── 03-ingress-alb.yaml            # ALB Ingress configuration
+│   └── 04-continuous-client.yaml       # Client that proves processing during disconnect
 ├── terraform/
 │   └── main.tf                         # FIS role, custom SSM document, experiment template
 └── scripts/

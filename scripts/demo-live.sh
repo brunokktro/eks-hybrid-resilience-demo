@@ -130,6 +130,11 @@ scenario_1() {
   run_cmd "kubectl get pods -n ${NAMESPACE} -l tier=hybrid -o wide"
   pause
 
+  step "Continuous client is actively calling podinfo every 5s"
+  explain "This proves the pods are PROCESSING, not just showing a stale Running status"
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/continuous-client --tail=5"
+  pause
+
   step "Injecting network fault..."
   echo ""
   if [[ -n "$FIS_TEMPLATE_ID" ]]; then
@@ -178,20 +183,20 @@ scenario_1() {
     sleep 10
   done
 
-  step "Node is NotReady. Let's check the pods:"
+  step "Node is NotReady. Checking pod status:"
   run_cmd "kubectl get pods -n ${NAMESPACE} -l tier=hybrid -o wide"
 
   echo ""
-  echo -e "  ${GREEN}${BOLD}━━━ PODS ARE STILL RUNNING! ━━━${NC}"
+  step "PROOF: Continuous client STILL getting 200s (active processing)"
+  explain "These requests are LOCAL pod-to-pod (same node). AWS disconnect does NOT affect them."
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/continuous-client --tail=5"
+
   echo ""
-  explain "The pods continue serving because the tolerations allow them to"
-  explain "tolerate the 'unreachable:NoExecute' taint."
-  explain ""
-  explain "Without tolerations: evicted after 300s (5 min default)."
-  explain "With our tolerations: survive for 3600s (1h) or indefinitely."
-  explain ""
-  explain "Key insight: the workload is UNAFFECTED. Only the control plane"
-  explain "lost contact. The datacenter continues operating normally."
+  echo -e "  ${GREEN}${BOLD}━━━ PODS ARE STILL RUNNING AND PROCESSING! ━━━${NC}"
+  echo ""
+  explain "The workload is UNAFFECTED. Only the control plane lost contact."
+  explain "Pod-to-pod communication via Cilium datapath continues locally."
+  explain "This is exactly the behavior needed: DC keeps operating if AWS goes down."
   pause
 }
 
@@ -200,6 +205,8 @@ scenario_2() {
   header "SCENARIO 2: Disconnect During Provisioning"
 
   step "Network is still disconnected (from scenario 1)"
+  step "Continuous client STILL logging 200s (existing pods unaffected):"
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/continuous-client --tail=3"
   explain "Let's try to scale the deployment from 2 to 4 replicas"
   pause
 
@@ -213,8 +220,13 @@ scenario_2() {
   run_cmd "kubectl get pods -n ${NAMESPACE} -l tier=hybrid -o wide"
 
   echo ""
-  explain "2 pods: Running (existing, unaffected)"
+  explain "2 pods: Running (existing, processing - proven by continuous client)"
   explain "2 pods: Pending (new, cannot be scheduled on unreachable node)"
+  echo ""
+
+  step "Proof: existing pods still processing during this entire time:"
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/continuous-client --tail=3"
+
   echo ""
   echo -e "  ${YELLOW}${BOLD}━━━ KNOWN LIMITATION ━━━${NC}"
   echo ""
@@ -223,6 +235,8 @@ scenario_2() {
   explain "  - ConfigMap/Secret updates → not propagated"
   explain "  - HPA/VPA scaling → not triggered"
   explain "  - Rolling updates → blocked"
+  explain ""
+  explain "BUT: existing pods continue PROCESSING (continuous client proves it)."
   explain ""
   explain "Mitigation: pre-size replicas for disconnection load (N+1 or N+2)."
   pause
