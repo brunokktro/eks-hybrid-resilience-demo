@@ -117,11 +117,13 @@ client-cloud-to-hybrid-xxxxx      1/1    Running  ip-10-43.. (EKS Region)
 
 | # | Scenario | Fault Method | Expected Outcome | What It Proves |
 |---|----------|--------------|------------------|----------------|
-| 1 | Steady-state disconnect | FIS (network blackhole on Gateway Nodes) | Existing pods continue serving requests. Node transitions to NotReady after ~40s. Tolerations prevent eviction. | **"DC doesn't stop if AWS goes down"** |
+| 1 | Steady-state disconnect | FIS (disrupt-connectivity on cluster subnets) | Existing pods continue serving requests. Node transitions to NotReady after ~40s. Tolerations prevent eviction. | **"DC doesn't stop if AWS goes down"** |
 | 1b | Multi-node on-prem communication | FIS (same as 1) | Pod on Hybrid Node 1 → Pod on Hybrid Node 2 continues working | **Production-like: microservices distributed across DC nodes** |
 | 2 | Disconnect during provisioning | FIS + `kubectl scale` | New pods remain Pending (kube-api unreachable). Existing pods unaffected. | Known limitation - transparent trade-off |
-| 3a | LB Region → Hybrid Nodes | ALB + curl | External traffic reaches on-prem pods via VXLAN tunnel | Ingress path validation |
+| 3a | LB Region → Hybrid Nodes | ALB + curl | External traffic reaches on-prem pods via VXLAN tunnel | Ingress path validation (region-originated) |
 | 3b | Hybrid Nodes → External | `kubectl exec` + curl | On-prem pods access external APIs | Egress path validation |
+| 3c | LB On-Premises (MetalLB VIP) | curl to LAN VIP during disconnect | On-prem VIP keeps serving during disconnection | **Local entry point independent of AWS** (analogous to F5 design) |
+| 4 | Node restart DURING disconnect | vCenter VM restart while FIS active | Pods do NOT restart until reconnection (kubelet needs API server at startup) | Worst-case limitation + why multi-node replicas matter |
 
 ---
 
@@ -444,6 +446,36 @@ kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Step 4b: Install MetalLB (On-Premises LB for Scenario 3c)
+
+MetalLB provides the local VIP in the on-prem LAN - the AWS-validated pattern for LB stability during disconnections (free, no trial expiry, no extra VM needed).
+
+```bash
+# Install MetalLB with tolerations to survive disconnect
+helm repo add metallb https://metallb.github.io/metallb
+helm repo update
+helm install metallb metallb/metallb \
+  --namespace metallb-system --create-namespace \
+  --set 'speaker.tolerations[0].key=node.kubernetes.io/unreachable' \
+  --set 'speaker.tolerations[0].operator=Exists' \
+  --set 'speaker.tolerations[0].effect=NoExecute'
+
+# Wait for MetalLB pods
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=metallb \
+  -n metallb-system --timeout=120s
+
+# Apply the IP pool + L2 advertisement + LoadBalancer service
+# IMPORTANT: edit the IP range in the manifest first (must be FREE IPs in your LAN)
+kubectl apply -f manifests/06-metallb-onprem-lb.yaml
+
+# Verify the VIP was assigned
+kubectl get svc server-hybrid-lb -n demo-stone
+# EXTERNAL-IP should show an IP from the pool (e.g., 192.168.3.240)
+
+# Test from the on-prem LAN
+curl -s http://192.168.3.240/ | jq '{hostname, message}'
+```
+
 ### Step 5: Run the Demo
 
 ```bash
@@ -658,7 +690,104 @@ kubectl logs -n demo-stone deploy/client-cloud-to-hybrid --tail=2
 
 ---
 
-### Phase 4: Disconnect During Provisioning (10 min)
+### Phase 3c: On-Premises Load Balancer During Disconnect (5 min)
+
+**Validates the customer's production entry-point design: a static VIP in the DC (analogous to F5 + NodePort), fully independent of AWS.**
+
+MetalLB (L2 mode) provides a LoadBalancer VIP in the on-premises LAN. This is the AWS-documented validated pattern: *"MetalLB in L2 mode remains stable during network disconnections between hybrid nodes and the EKS control plane"* ([source](https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-network-disconnection-best-practices.html)).
+
+#### Step 1: Show the on-prem VIP
+
+```bash
+kubectl get svc server-hybrid-lb -n demo-stone
+# NAME               TYPE           EXTERNAL-IP     PORT(S)
+# server-hybrid-lb   LoadBalancer   192.168.3.240   80:3xxxx/TCP
+```
+
+#### Step 2: Access via the VIP from the on-prem LAN (still disconnected from AWS)
+
+```bash
+# From any machine on the on-premises network (or from the hybrid node itself):
+curl -s http://192.168.3.240/ | jq '{hostname, message}'
+# Response comes from server-hybrid-1 - NO AWS involved in this path
+```
+
+#### Step 3: Prove it works during disconnect
+
+While the FIS experiment is active (or vCenter NIC disconnected from AWS path):
+
+```bash
+# The VIP keeps responding - this path never touches AWS
+for i in $(seq 1 5); do
+  curl -s -o /dev/null -w "Request $i: HTTP %{http_code}\n" http://192.168.3.240/
+done
+# Request 1: HTTP 200
+# Request 2: HTTP 200
+# ...
+```
+
+**Key talking points:**
+- This VIP is the DC's local entry point - the same role F5 plays in the production design
+- ARP-based L2 announcement: zero dependency on control plane or AWS connectivity
+- MetalLB speaker has tolerations to survive the disconnect (same pattern as the app pods)
+- In production, replace MetalLB with F5 + NodePort + Gateway API as planned; the concept demonstrated is identical: local traffic stays local
+
+---
+
+### Phase 4: Node Restart DURING Disconnect - Worst Case (5 min)
+
+**The "what if it gets worse?" scenario: a node power-cycles while disconnected from AWS.**
+
+> Documented behavior: [EKS Best Practices - Pod Failover, Scenario 5](https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-kubernetes-pod-failover.html)
+
+#### Step 1: With FIS still active (network disconnected), restart Hybrid Node 2 in vCenter
+
+```bash
+# In vCenter: VM #2 → Power → Restart Guest OS
+# (use Node 2 so the primary demo pods on Node 1 stay untouched)
+```
+
+#### Step 2: Observe - pods on Node 2 do NOT come back
+
+```bash
+kubectl logs -n demo-stone deploy/client-hybrid-to-hybrid --tail=5
+# [10:35:10] #300 CROSS-NODE → server-hybrid-2 | TIMEOUT ✗   ← Node 2 restarted,
+# [10:35:15] #301 CROSS-NODE → server-hybrid-2 | TIMEOUT ✗     pod did NOT restart
+```
+
+**Why:** on startup, the kubelet queries the API server to learn which pods it should run. Without connectivity, it cannot retrieve that information - so pods stay down until reconnection. Not even `crictl` can restart them manually (containerd removes failed pods rather than restarting).
+
+#### Step 3: Show that the app SURVIVES thanks to multi-node replicas
+
+```bash
+# server-hybrid-1 on Node 1 (NOT restarted) keeps serving:
+kubectl logs -n demo-stone deploy/client-hybrid --tail=3
+# [10:35:20] #302 LOCAL → server-hybrid-1 | 200 ✓   ← still processing
+
+# And the on-prem VIP still works (it targets Node 1 pods):
+curl -s -o /dev/null -w "HTTP %{http_code}\n" http://192.168.3.240/
+# HTTP 200
+```
+
+#### Step 4: Reconnect and watch Node 2 recover
+
+```bash
+# Stop FIS (or wait for auto-revert). Node 2 reconnects, kubelet syncs
+# with the API server, and pods restart automatically.
+kubectl logs -n demo-stone deploy/client-hybrid-to-hybrid --tail=3
+# [10:40:15] #360 CROSS-NODE → server-hybrid-2 | 200 ✓   ← recovered
+```
+
+**Key talking points:**
+- This is the WORST-CASE combo: node failure + network disconnection simultaneously
+- Pods on the restarted node stay down until reconnection - **this is why replica count and multi-node distribution matter**
+- The app survived because replicas exist on the OTHER node (exactly the pattern we recommend: N+1/N+2 across nodes)
+- Static pods are the only workload the kubelet can start offline, but they are NOT recommended for applications - multi-node replicas are the right mitigation
+- For Caravela: distribute critical services across at least 2-3 nodes per DC
+
+---
+
+### Phase 5: Disconnect During Provisioning (10 min)
 
 **While still disconnected. client-hybrid still logging 200s.**
 
@@ -711,7 +840,7 @@ kubectl logs -n demo-stone deploy/client-hybrid --tail=3
 
 ---
 
-### Phase 5: Recovery (5 min)
+### Phase 6: Recovery (5 min)
 
 ```bash
 # Stop FIS experiment (auto-stops after duration), OR
@@ -903,9 +1032,10 @@ eks-hybrid-resilience-demo/
 │   ├── 02-server-hybrid-2.yaml         # SERVER on Hybrid Node 2 (cross-node target)
 │   ├── 03-server-cloud.yaml            # SERVER on Cloud Nodes (comparison)
 │   ├── 04-clients.yaml                 # ALL 3 CLIENTS (local + cross-node + cross-cluster)
-│   └── 05-ingress-alb.yaml            # ALB Ingress configuration
+│   ├── 05-ingress-alb.yaml            # ALB Ingress configuration
+│   └── 06-metallb-onprem-lb.yaml       # On-prem LB: MetalLB IP pool + L2 + LoadBalancer svc
 ├── terraform/
-│   └── main.tf                         # FIS role, custom SSM document, experiment template
+│   └── main.tf                         # FIS role, prefix list, disrupt-connectivity template
 └── scripts/
     ├── 00-prerequisites.sh             # Validate cluster readiness
     └── demo-live.sh                    # Interactive demo script (customer-facing)

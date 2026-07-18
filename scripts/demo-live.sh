@@ -252,6 +252,75 @@ scenario_2() {
   pause
 }
 
+# ─── Scenario 3c: On-Prem LB (MetalLB VIP) ───────────────────────────────────
+scenario_3c() {
+  header "SCENARIO 3c: On-Premises Load Balancer (MetalLB VIP)"
+
+  step "LoadBalancer service with VIP in the on-prem LAN"
+  run_cmd "kubectl get svc server-hybrid-lb -n ${NAMESPACE}"
+
+  VIP=$(kubectl get svc server-hybrid-lb -n ${NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+  if [[ -z "$VIP" ]]; then
+    fail "VIP not assigned. Check MetalLB installation and IPAddressPool."
+    return
+  fi
+
+  step "VIP: ${VIP} (L2/ARP announced in the LAN - zero AWS dependency)"
+  explain "This is the same role F5 plays in the production design:"
+  explain "a static local entry point for DC traffic."
+  pause
+
+  step "Requests via the on-prem VIP:"
+  for i in $(seq 1 5); do
+    CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "http://${VIP}/" 2>/dev/null || echo "TIMEOUT")
+    echo -e "    Request ${i}: HTTP ${CODE}"
+  done
+  echo ""
+  result "On-prem VIP serving traffic - path never touches AWS"
+  explain "Run this DURING the disconnect (scenario 1) to prove independence."
+  pause
+}
+
+# ─── Scenario 4: Node Restart During Disconnect (Worst Case) ─────────────────
+scenario_4() {
+  header "SCENARIO 4: Node Restart DURING Disconnect (Worst Case)"
+
+  step "Precondition: network still disconnected (FIS active)"
+  explain "Now we simulate a SECOND simultaneous failure: Node 2 power-cycles."
+  echo ""
+  echo -e "  ${YELLOW}In vCenter: VM #2 → Power → Restart Guest OS${NC}"
+  echo ""
+  read -p "  Press ENTER after restarting Node 2..."
+
+  step "Pods on Node 2 do NOT come back (kubelet needs API server at startup):"
+  explain "Watching cross-node client - requests to server-hybrid-2 fail:"
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-hybrid-to-hybrid --tail=5"
+  echo ""
+  explain "Why: on startup, the kubelet queries the API server to learn which"
+  explain "pods to run. Disconnected = no answer = pods stay down."
+  explain "Not even crictl can restart them (containerd removes failed pods)."
+  pause
+
+  step "BUT the app survives - replicas on Node 1 (not restarted) keep serving:"
+  run_cmd "kubectl logs -n ${NAMESPACE} deploy/client-hybrid --tail=3"
+
+  VIP=$(kubectl get svc server-hybrid-lb -n ${NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+  if [[ -n "$VIP" ]]; then
+    step "On-prem VIP also still serving (targets Node 1):"
+    CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "http://${VIP}/" 2>/dev/null || echo "TIMEOUT")
+    echo -e "    VIP ${VIP}: HTTP ${CODE}"
+    echo ""
+  fi
+
+  echo -e "  ${YELLOW}${BOLD}━━━ WORST-CASE LESSON ━━━${NC}"
+  echo ""
+  explain "Node failure + disconnect = pods on that node stay down until reconnect."
+  explain "Mitigation: multi-node replica distribution (N+1/N+2 across nodes)."
+  explain "The app survived BECAUSE replicas exist on the other node."
+  explain "For production: distribute critical services across 2-3 nodes per DC."
+  pause
+}
+
 # ─── Recovery ─────────────────────────────────────────────────────────────────
 scenario_recovery() {
   header "RECOVERY: Restoring Connectivity"
@@ -298,10 +367,12 @@ show_menu() {
   echo -e "${BOLD}║     EKS Hybrid Nodes - Resilience Demo                      ║${NC}"
   echo -e "${BOLD}╠══════════════════════════════════════════════════════════════╣${NC}"
   echo -e "${BOLD}║${NC}  0)  Show current state (warm-up)                           ${BOLD}║${NC}"
-  echo -e "${BOLD}║${NC}  3a) LB Region → Hybrid Nodes (ingress test)                ${BOLD}║${NC}"
+  echo -e "${BOLD}║${NC}  3a) LB Region → Hybrid Nodes (ALB ingress test)            ${BOLD}║${NC}"
   echo -e "${BOLD}║${NC}  3b) Hybrid Nodes → External (egress test)                  ${BOLD}║${NC}"
+  echo -e "${BOLD}║${NC}  3c) LB On-Premises (MetalLB VIP test)                      ${BOLD}║${NC}"
   echo -e "${BOLD}║${NC}  1)  Disconnect - steady state (core demo)                  ${BOLD}║${NC}"
   echo -e "${BOLD}║${NC}  2)  Disconnect - during provisioning (limitation)           ${BOLD}║${NC}"
+  echo -e "${BOLD}║${NC}  4)  Node restart DURING disconnect (worst case)             ${BOLD}║${NC}"
   echo -e "${BOLD}║${NC}  R)  Recovery (restore connectivity)                         ${BOLD}║${NC}"
   echo -e "${BOLD}║${NC}  A)  Run ALL scenarios in recommended order                  ${BOLD}║${NC}"
   echo -e "${BOLD}║${NC}  Q)  Quit                                                    ${BOLD}║${NC}"
@@ -313,8 +384,10 @@ run_all() {
   scenario_0
   scenario_3a
   scenario_3b
+  scenario_3c
   scenario_1
   scenario_2
+  scenario_4
   scenario_recovery
   echo ""
   result "All scenarios completed successfully!"
@@ -326,8 +399,10 @@ if [[ $# -gt 0 ]]; then
     0) scenario_0 ;;
     3a) scenario_3a ;;
     3b) scenario_3b ;;
+    3c) scenario_3c ;;
     1) scenario_1 ;;
     2) scenario_2 ;;
+    4) scenario_4 ;;
     recovery|R|r) scenario_recovery ;;
     all|A|a) run_all ;;
     *) echo "Unknown scenario: $1"; exit 1 ;;
@@ -343,8 +418,10 @@ while true; do
     0) scenario_0 ;;
     3a) scenario_3a ;;
     3b) scenario_3b ;;
+    3c) scenario_3c ;;
     1) scenario_1 ;;
     2) scenario_2 ;;
+    4) scenario_4 ;;
     R|r) scenario_recovery ;;
     A|a) run_all ;;
     Q|q) echo ""; echo "Done!"; exit 0 ;;

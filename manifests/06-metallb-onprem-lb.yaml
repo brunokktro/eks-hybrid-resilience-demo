@@ -1,0 +1,74 @@
+# On-Premises Load Balancer (MetalLB L2 mode)
+#
+# WHY METALLB:
+#   - AWS EKS Best Practices docs cite MetalLB L2 as the VALIDATED example that
+#     "remains stable during network disconnections between hybrid nodes and
+#     the EKS control plane".
+#     Source: https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-network-disconnection-best-practices.html
+#   - Free, CNCF project, no trial expiry (vs F5 30-day trial)
+#   - Runs IN the cluster on the hybrid nodes - no extra VM in vSphere
+#   - Demonstrates the same concept as the customer's production design
+#     (static VIP as single HTTPS entry point, like F5 + NodePort)
+#
+# INSTALL METALLB FIRST (before applying this manifest):
+#   helm repo add metallb https://metallb.github.io/metallb
+#   helm install metallb metallb/metallb \
+#     --namespace metallb-system --create-namespace \
+#     --set speaker.tolerations[0].key=node.kubernetes.io/unreachable \
+#     --set speaker.tolerations[0].operator=Exists \
+#     --set speaker.tolerations[0].effect=NoExecute \
+#     --set controller.nodeSelector."eks\.amazonaws\.com/compute-type"=hybrid
+#
+# THEN apply this manifest:
+#   kubectl apply -f manifests/06-metallb-onprem-lb.yaml
+#
+# The VIP range below must be FREE IPs in your on-premises LAN
+# (same subnet as the hybrid nodes, NOT used by DHCP).
+---
+# IP pool: free addresses in the on-prem LAN (adjust to your network)
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: onprem-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 192.168.3.240-192.168.3.250
+---
+# L2 advertisement: MetalLB speaker answers ARP for the VIPs on the LAN.
+# L2 mode is the AWS-validated mode for stability during disconnections
+# (BGP mode via Cilium is coupled to the agent and can flap - see Cilium #31702).
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: onprem-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - onprem-pool
+---
+# LoadBalancer Service: exposes server-hybrid-1 on a stable VIP in the LAN.
+# Clients on the on-premises network reach the app via this VIP -
+# NO dependency on AWS (works during disconnection).
+apiVersion: v1
+kind: Service
+metadata:
+  name: server-hybrid-lb
+  namespace: demo-stone
+  labels:
+    demo: hybrid-resilience
+  annotations:
+    metallb.io/address-pool: onprem-pool
+spec:
+  type: LoadBalancer
+  # Keep traffic local to the node with the pod (no extra hop, preserves source IP)
+  externalTrafficPolicy: Local
+  ports:
+    - port: 80
+      targetPort: 9898
+      protocol: TCP
+      name: http
+  selector:
+    app: server
+    location: hybrid
+    node-id: node1
