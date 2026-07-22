@@ -128,6 +128,35 @@ client-cloud-to-hybrid-xxxxx      1/1    Running  ip-10-43.. (EKS Region)
 
 ---
 
+## Lab Network Topology (Bruno's Home Lab Reference)
+
+> Environment-specific reference for the PoC lab. Adjust to your own network when reproducing.
+
+| Network | CIDR | Role |
+|---------|------|------|
+| Home LAN | 192.168.1.0/24 | Workstation network (Mac) |
+| pfSense WAN | **192.168.1.5** | pfSense uplink on the home LAN |
+| pfSense LAN | **192.168.2.1** (192.168.2.0/24) | Lab 1 network |
+| Lab 2 LAN | 192.168.3.0/24 | **Hybrid Nodes network** (RemoteNodeNetwork) |
+| Hybrid Node 1 | 192.168.3.51 | Ubuntu 24.04 VM (vSphere) |
+| Hybrid Node 2 | 192.168.3.52 | Ubuntu 24.04 VM (vSphere) - Node 2 |
+| Remote Pod CIDR | 10.201.0.0/16 | Pods on hybrid nodes (RemotePodNetwork) |
+| MetalLB VIP pool | 192.168.3.240-250 | On-prem LoadBalancer VIPs |
+
+**Workstation access to the lab network** (Mac is on 192.168.1.0/24, nodes on 192.168.3.0/24):
+
+```bash
+# Static route via pfSense WAN interface (run on the Mac):
+sudo route add -net 192.168.3.0/24 192.168.1.5
+
+# Then SSH to the nodes:
+ssh ubuntu@192.168.3.51
+```
+
+> Note: pfSense blocks WAN-initiated traffic by default. If SSH times out after
+> adding the route, add a firewall rule on pfSense: WAN interface, allow source
+> 192.168.1.0/24 → destination 192.168.3.0/24 (or an "allow from home LAN" alias).
+
 ## Prerequisites
 
 - AWS CLI v2 configured with credentials for the target account
