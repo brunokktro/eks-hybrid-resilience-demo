@@ -156,6 +156,60 @@ ssh ubuntu@192.168.3.51
 > Note: pfSense blocks WAN-initiated traffic by default. If SSH times out after
 > adding the route, add a firewall rule on pfSense: WAN interface, allow source
 > 192.168.1.0/24 → destination 192.168.3.0/24 (or an "allow from home LAN" alias).
+>
+> **Rule persistence:** pfSense firewall rules created via Firewall → Rules → WAN →
+> Add (+ Save + Apply Changes) are saved to `config.xml` and SURVIVE reboots and
+> power-offs. If a rule "disappeared", it was either never applied (missing
+> "Apply Changes"), created as a temporary Easy Rule state, or lost in a config
+> restore from an older backup. Verify after creating: Diagnostics → Backup &
+> Restore shows the current config.xml including your rules.
+
+### Dynamic Residential IP - VPN Recovery Runbook
+
+The home lab uses a residential connection with a DYNAMIC public IP. When the IP
+changes (ISP renewal, router reboot), the AWS Customer Gateway still points to the
+OLD IP and the VPN tunnels stay DOWN (AWS rejects IKE from an unexpected source IP).
+
+**Symptoms:** VPN tunnels DOWN, hybrid node NotReady, SSM ConnectionLost - right
+after the lab was powered on.
+
+**Diagnosis:**
+
+```bash
+# Compare current public IP vs the CGW registered IP
+curl -s -4 ifconfig.me
+aws ec2 describe-customer-gateways --region <REGION> \
+  --query 'CustomerGateways[].{id:CustomerGatewayId,ip:IpAddress,name:Tags[?Key==`Name`].Value|[0]}'
+```
+
+**Fix (NO pfSense changes needed - tunnel endpoints and PSKs are preserved):**
+
+```bash
+# 1. Create a CGW with the new IP (AWS is idempotent: returns the existing
+#    CGW if one already exists with the same IP + ASN + type)
+NEW_CGW=$(aws ec2 create-customer-gateway --region <REGION> --type ipsec.1 \
+  --public-ip <NEW_PUBLIC_IP> --bgp-asn 65000 \
+  --query 'CustomerGateway.CustomerGatewayId' --output text)
+
+# 2. MOVE the existing VPN connection to the new CGW
+#    (modify-vpn-connection preserves tunnel outside IPs and pre-shared keys,
+#     so the pfSense IPsec config keeps working as-is)
+aws ec2 modify-vpn-connection --region <REGION> \
+  --vpn-connection-id <VPN_ID> --customer-gateway-id ${NEW_CGW}
+
+# 3. Wait for state=available (~5-10 min), then pfSense re-establishes IKE
+aws ec2 describe-vpn-connections --region <REGION> --vpn-connection-ids <VPN_ID> \
+  --query 'VpnConnections[0].{state:State,tunnels:VgwTelemetry[].Status}'
+```
+
+> **Why not edit the CGW IP?** The CGW `IpAddress` is immutable - there is no
+> modify API for it. Moving the VPN to a new CGW is the AWS-documented path.
+>
+> **Terraform drift note:** if the VPN/CGW are Terraform-managed, this CLI fix
+> creates drift (VPN now points to a CGW outside the state). Accepted trade-off
+> for a lab: the alternative (changing `customer_gateway_ip` in tfvars) forces
+> REPLACEMENT of CGW + VPN = new tunnel IPs + new PSKs = pfSense reconfiguration.
+> Reconcile the state later with `terraform state rm` + `import` if needed.
 
 ## Prerequisites
 

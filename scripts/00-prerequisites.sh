@@ -85,7 +85,19 @@ VPN_UP=$(aws ec2 describe-vpn-connections --region ${REGION} \
 if [[ "$VPN_UP" -ge 1 ]]; then
   pass "VPN tunnels UP: ${VPN_UP}"
 else
-  warn "No VPN tunnels UP - check on-premises router"
+  warn "No VPN tunnels UP - checking for dynamic IP mismatch..."
+  # Dynamic residential IP check: compare current public IP vs registered CGWs
+  MY_IP=$(curl -s -4 --max-time 8 ifconfig.me 2>/dev/null || echo "unknown")
+  CGW_IPS=$(aws ec2 describe-customer-gateways --region ${REGION} \
+    --query 'CustomerGateways[?State==`available`].IpAddress' --output text 2>/dev/null)
+  if [[ "$MY_IP" != "unknown" ]] && ! echo "$CGW_IPS" | grep -q "$MY_IP"; then
+    fail "PUBLIC IP MISMATCH: current=${MY_IP}, registered CGWs=[${CGW_IPS}]"
+    echo "    → Your residential IP changed. Fix with the runbook in README:"
+    echo "      'Dynamic Residential IP - VPN Recovery Runbook'"
+    echo "      (create-customer-gateway + modify-vpn-connection, no pfSense changes)"
+  else
+    echo "    → IP matches a CGW. Check pfSense IPsec status and ISP connectivity."
+  fi
 fi
 
 # 7. Namespace
