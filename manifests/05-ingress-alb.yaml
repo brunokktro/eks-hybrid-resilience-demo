@@ -1,7 +1,8 @@
-# ALB Ingress - Routes external traffic to hybrid and cloud servers.
-#   /         → server-hybrid-1 (on-premises, default)
-#   /hybrid   → server-hybrid-1 (on-premises)
-#   /cloud    → server-cloud (AWS region)
+# ALB Ingress - Routes external traffic to the on-premises server.
+#   /  → server-hybrid-1 (on-premises)
+# Note: podinfo only serves its own routes (/, /healthz, etc). Path-based
+# routing like /cloud would be forwarded as-is and return 404 - the cloud
+# comparison is done via kubectl exec in the runbook instead.
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -25,20 +26,6 @@ spec:
   rules:
     - http:
         paths:
-          - path: /hybrid
-            pathType: Prefix
-            backend:
-              service:
-                name: server-hybrid-1
-                port:
-                  number: 9898
-          - path: /cloud
-            pathType: Prefix
-            backend:
-              service:
-                name: server-cloud
-                port:
-                  number: 9898
           - path: /
             pathType: Prefix
             backend:

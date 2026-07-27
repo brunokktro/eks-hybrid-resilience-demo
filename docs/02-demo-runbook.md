@@ -96,7 +96,9 @@ aws fis start-experiment \
   --region sa-east-1
 :::
 
-Acompanhar o node virar NotReady (~40s):
+::alert[Comportamento por tipo de endpoint EKS: se o kubelet alcança o endpoint PÚBLICO do cluster via internet (caso deste lab), o node PERMANECE Ready durante o FIS - a falha derruba apenas o data path (cross-cluster/VXLAN). Para demonstrar o NotReady + tolerations, desconecte a NIC da VM no vCenter (corta tudo). Em ambientes com endpoint privado + Direct Connect (produção típica), o FIS derruba ambos.]{type="warning"}
+
+Acompanhar o estado do node (NotReady apenas se o control plane path cair - ver alerta acima):
 
 :::code{showCopyAction=true showLineNumbers=false language=bash}
 watch -n 5 'kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid'

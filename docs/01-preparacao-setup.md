@@ -83,35 +83,11 @@ Os nomes são desenhados para que `kubectl get pods` já diga ONDE roda e O QUE 
 
 Padrão: `{papel}-{localização}[-to-{alvo}]`
 
-## Topologia de rede do Lab (referência do home lab)
+## Topologia de rede (adapte ao seu ambiente)
 
-| Rede | CIDR / IP | Papel |
-|------|-----------|-------|
-| Home LAN | 192.168.1.0/24 | Rede da estação (Mac) |
-| pfSense WAN | 192.168.1.5 | Uplink do pfSense na home LAN |
-| pfSense LAN | 192.168.2.1 | Rede do Lab 1 |
-| Lab 2 LAN | 192.168.3.0/24 | Rede dos Hybrid Nodes (RemoteNodeNetwork) |
-| Hybrid Node 1 | 192.168.3.51 | VM Ubuntu 24.04 (vSphere) |
-| Hybrid Node 2 | 192.168.3.52 | VM Ubuntu 24.04 (vSphere) |
-| Remote Pod CIDR | 10.201.0.0/16 | Pods nos hybrid nodes |
-| MetalLB VIP pool | 192.168.3.240-250 | VIPs LoadBalancer on-prem |
-
-### Acesso da estação ao lab
-
-Rota estática persistente (o `route add` comum some no reboot):
-
-:::code{showCopyAction=true showLineNumbers=false language=bash}
-sudo networksetup -setadditionalroutes "Dell Universal Dock D6000" \
-  192.168.3.0 255.255.255.0 192.168.1.5
-:::
-
-SSH nos nodes (user `lopbruno`, chave `id_ecdsa`):
-
-:::code{showCopyAction=true showLineNumbers=false language=bash}
-ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51
-:::
-
-::alert[IP residencial dinâmico: se o IP público mudar, os tunnels VPN caem. Fix sem tocar no pfSense: criar CGW com o IP novo e mover a VPN via `aws ec2 modify-vpn-connection` (preserva tunnel IPs e PSKs). Runbook completo em environment-status.]{type="warning"}
+Preencha com os valores do SEU ambiente on-premises: LAN dos hybrid nodes
+(RemoteNodeNetwork), CIDR dos pods (RemotePodNetwork), pool de VIPs do MetalLB
+(IPs livres na LAN) e o método de conectividade com a AWS (VPN/Direct Connect).
 
 ## Pré-requisitos
 
