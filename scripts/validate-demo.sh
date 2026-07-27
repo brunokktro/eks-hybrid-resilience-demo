@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
-# EKS Hybrid Nodes Resilience Demo - Live Interactive Script
+# EKS Hybrid Nodes Resilience Demo - VALIDATION / TEST HARNESS
 #
-# DESIGN PHILOSOPHY:
-#   This script is meant to be run DURING a customer call.
-#   It pauses between steps, explains what's happening, and
-#   lets the presenter answer questions at each stage.
-#   The customer sees the terminal output - it should be clear and visual.
+# PURPOSE:
+#   This script is a DRY-RUN VALIDATOR - run it BEFORE the customer call to
+#   confirm every scenario works end-to-end. It is NOT for the live demo:
+#   the live demo is presented step-by-step from the runbook doc
+#   (02-demo-runbook) so the customer sees each command explained.
+#
+#   All operations are reversible (scale up/down, FIS auto-reverts). Run the
+#   'reset' option at the end to guarantee a clean baseline before the live demo
+#   (replicas back to 2, no active FIS experiment, no residual state).
 #
 # Usage: ./demo-live.sh [scenario]
 #   No args: interactive menu
-#   0|1|2|3a|3b|recovery: jump to specific scenario
+#   0|1|2|3a|3b|3c|4|recovery|reset: jump to specific scenario
 set -euo pipefail
 
 # ─── Configuration (adjust for your environment) ─────────────────────────────
@@ -377,6 +381,35 @@ scenario_recovery() {
   run_cmd "kubectl scale deploy server-hybrid-1 -n ${NAMESPACE} --replicas=2"
 }
 
+# ─── Reset: guarantee clean baseline before the live demo ────────────────────
+scenario_reset() {
+  header "RESET - Restoring clean baseline (run after testing, before live demo)"
+
+  step "Resetting server-hybrid-1 to 2 replicas"
+  kubectl scale deploy server-hybrid-1 -n ${NAMESPACE} --replicas=2 2>/dev/null || true
+
+  step "Stopping any running FIS experiments"
+  RUNNING=$(aws fis list-experiments --region ${REGION} \
+    --query "experiments[?state.status=='running'].id" --output text 2>/dev/null || echo "")
+  if [[ -n "$RUNNING" ]]; then
+    for exp in $RUNNING; do
+      echo "  stopping FIS experiment $exp"
+      aws fis stop-experiment --id "$exp" --region ${REGION} >/dev/null 2>&1 || true
+    done
+  else
+    echo "  no running FIS experiments"
+  fi
+
+  step "Verifying pod state"
+  kubectl get pods -n ${NAMESPACE} -o wide 2>/dev/null | awk '{print $1, $3}'
+
+  echo ""
+  result "Baseline restored - environment clean for the live demo"
+  explain "Note: this script leaves NO persistent artifacts. All changes"
+  explain "(scaling, FIS) are reversible and reset here."
+  pause
+}
+
 # ─── Main Menu ────────────────────────────────────────────────────────────────
 show_menu() {
   echo ""
@@ -391,6 +424,7 @@ show_menu() {
   echo -e "${BOLD}║${NC}  2)  Disconnect - during provisioning (limitation)           ${BOLD}║${NC}"
   echo -e "${BOLD}║${NC}  4)  Node restart DURING disconnect (worst case)             ${BOLD}║${NC}"
   echo -e "${BOLD}║${NC}  R)  Recovery (restore connectivity)                         ${BOLD}║${NC}"
+  echo -e "${BOLD}║${NC}  X)  RESET (clean baseline before live demo)                 ${BOLD}║${NC}"
   echo -e "${BOLD}║${NC}  A)  Run ALL scenarios in recommended order                  ${BOLD}║${NC}"
   echo -e "${BOLD}║${NC}  Q)  Quit                                                    ${BOLD}║${NC}"
   echo -e "${BOLD}╚══════════════════════════════════════════════════════════════╝${NC}"
@@ -406,8 +440,9 @@ run_all() {
   scenario_2
   scenario_4
   scenario_recovery
+  scenario_reset
   echo ""
-  result "All scenarios completed successfully!"
+  result "All scenarios validated + baseline reset!"
 }
 
 # Handle direct invocation with argument
@@ -421,6 +456,7 @@ if [[ $# -gt 0 ]]; then
     2) scenario_2 ;;
     4) scenario_4 ;;
     recovery|R|r) scenario_recovery ;;
+    reset|X|x) scenario_reset ;;
     all|A|a) run_all ;;
     *) echo "Unknown scenario: $1"; exit 1 ;;
   esac
@@ -440,6 +476,7 @@ while true; do
     2) scenario_2 ;;
     4) scenario_4 ;;
     R|r) scenario_recovery ;;
+    X|x) scenario_reset ;;
     A|a) run_all ;;
     Q|q) echo ""; echo "Done!"; exit 0 ;;
     *) echo -e "${RED}Invalid option${NC}" ;;

@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR" xml:lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>EKS Hybrid Nodes - Demo Stone</title>
+  <style>
+
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+
+ul.task-list[class]{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+font-size: inherit;
+width: 0.8em;
+margin: 0 0.8em 0.2em -1.6em;
+vertical-align: middle;
+}
+.display.math{display: block; text-align: center; margin: 0.5rem auto;}
+</style>
+  <style type="text/css">:root {
+--aws-navy: #232f3e;
+--aws-orange: #ff9900;
+--hybrid-green: #2e7d32;
+--cloud-blue: #1565c0;
+--code-bg: #1b1f23;
+--border: #e1e4e8;
+--text: #1a1a1a;
+--muted: #57606a;
+}
+* { box-sizing: border-box; }
+body {
+font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+line-height: 1.6;
+color: var(--text);
+max-width: 900px;
+margin: 0 auto;
+padding: 40px 24px 80px;
+background: #fff;
+}
+h1 {
+color: var(--aws-navy);
+border-bottom: 3px solid var(--aws-orange);
+padding-bottom: 12px;
+font-size: 2rem;
+}
+h2 {
+color: var(--aws-navy);
+margin-top: 2.2rem;
+border-left: 4px solid var(--aws-orange);
+padding-left: 12px;
+}
+h3 { color: #3a4553; margin-top: 1.6rem; }
+h4 { color: var(--muted); }
+a { color: var(--cloud-blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code {
+background: #f0f2f4;
+padding: 2px 6px;
+border-radius: 4px;
+font-family: "SF Mono", Menlo, Consolas, monospace;
+font-size: 0.88em;
+color: #b31d28;
+}
+pre {
+background: var(--code-bg);
+color: #e6edf3;
+padding: 16px 18px;
+border-radius: 8px;
+overflow-x: auto;
+border: 1px solid #30363d;
+position: relative;
+}
+pre code {
+background: none;
+color: inherit;
+padding: 0;
+font-size: 0.85em;
+}
+
+pre::before {
+content: "";
+position: absolute;
+top: 8px;
+right: 12px;
+color: #6e7681;
+font-size: 0.7em;
+}
+table {
+border-collapse: collapse;
+width: 100%;
+margin: 16px 0;
+font-size: 0.92em;
+}
+th, td {
+border: 1px solid var(--border);
+padding: 8px 12px;
+text-align: left;
+}
+th { background: var(--aws-navy); color: #fff; }
+tr:nth-child(even) { background: #f6f8fa; }
+blockquote {
+border-left: 4px solid var(--aws-orange);
+background: #fff8ec;
+margin: 16px 0;
+padding: 12px 18px;
+color: #6a4a00;
+}
+
+.tag-hybrid { color: var(--hybrid-green); font-weight: 700; }
+.tag-cloud { color: var(--cloud-blue); font-weight: 700; }
+hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+</style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">EKS Hybrid Nodes - Demo Stone</h1>
+</header>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#visão-geral-da-demo" id="toc-visão-geral-da-demo">Visão
+geral da demo</a></li>
+<li><a href="#arquitetura" id="toc-arquitetura">Arquitetura</a></li>
+<li><a href="#convenção-de-nomes-dos-pods" id="toc-convenção-de-nomes-dos-pods">Convenção de nomes dos
+Pods</a></li>
+<li><a href="#topologia-de-rede-do-lab-referência-do-home-lab" id="toc-topologia-de-rede-do-lab-referência-do-home-lab">Topologia de
+rede do Lab (referência do home lab)</a></li>
+<li><a href="#pré-requisitos" id="toc-pré-requisitos">Pré-requisitos</a></li>
+<li><a href="#setup---passo-1-validar-pré-requisitos" id="toc-setup---passo-1-validar-pré-requisitos">Setup - Passo 1: Validar
+pré-requisitos</a></li>
+<li><a href="#setup---passo-2-rotular-os-hybrid-nodes" id="toc-setup---passo-2-rotular-os-hybrid-nodes">Setup - Passo 2:
+Rotular os Hybrid Nodes</a></li>
+<li><a href="#setup---passo-3-provisionar-a-infra-do-fis-terraform" id="toc-setup---passo-3-provisionar-a-infra-do-fis-terraform">Setup -
+Passo 3: Provisionar a infra do FIS (Terraform)</a></li>
+<li><a href="#setup---passo-4-deploy-dos-servers-e-clients" id="toc-setup---passo-4-deploy-dos-servers-e-clients">Setup - Passo 4:
+Deploy dos servers e clients</a></li>
+<li><a href="#setup---passo-5-metallb-lb-on-premises" id="toc-setup---passo-5-metallb-lb-on-premises">Setup - Passo 5: MetalLB
+(LB on-premises)</a></li>
+<li><a href="#setup---passo-6-alb-ingress" id="toc-setup---passo-6-alb-ingress">Setup - Passo 6: ALB
+Ingress</a></li>
+<li><a href="#setup---passo-7-validar-tudo-dry-run" id="toc-setup---passo-7-validar-tudo-dry-run">Setup - Passo 7: Validar
+tudo (dry-run)</a></li>
+<li><a href="#nota-segundo-hybrid-node" id="toc-nota-segundo-hybrid-node">Nota: segundo Hybrid Node</a></li>
+</ul>
+</nav>
+<p>Este documento cobre TODA a preparação do ambiente, feita
+<strong>antes</strong> da call com o cliente. Ao final, o ambiente
+estará validado e pronto para a demo ao vivo (que está na Parte 2 - Demo
+Runbook).</p>
+<p>::alert<span type="info">Nada aqui é apresentado ao cliente. É o
+trabalho de bastidor. A demo ao vivo começa na Parte 2.</span></p>
+<h2 id="visão-geral-da-demo">Visão geral da demo</h2>
+<p>Demonstração de resiliência de workloads em EKS Hybrid Nodes durante
+cenários de desconexão de rede entre a AWS e o ambiente on-premises.
+Prova que workloads rodando on-prem continuam operando mesmo quando a
+conectividade com a região AWS é perdida, usando:</p>
+<ul>
+<li><strong>Tolerations</strong> do Kubernetes para evitar eviction dos
+pods durante desconexão</li>
+<li><strong>AWS Fault Injection Service (FIS)</strong> para injeção de
+falha controlada e auditável</li>
+<li><strong>vCenter</strong> para desconexão visual e imediata da
+interface de rede</li>
+<li><strong>Application Load Balancer (ALB)</strong> e
+<strong>MetalLB</strong> para validar os fluxos de tráfego</li>
+</ul>
+<h2 id="arquitetura">Arquitetura</h2>
+<pre class="mermaid">graph TB
+    subgraph AWS["AWS Region (sa-east-1)"]
+        CP["EKS Control Plane<br/>(gerenciado)"]
+        subgraph VPC["VPC 10.43.0.0/16"]
+            ALB["ALB<br/>(internet-facing)"]
+            subgraph CloudNodes["Cloud Nodes (EC2)"]
+                PC["server-cloud<br/>(comparação)"]
+                CC["client-cloud-to-hybrid<br/>→ server-hybrid-1"]
+            end
+            subgraph GatewayNodes["Gateway Nodes"]
+                GW["Hybrid Node Gateway<br/>(endpoint VXLAN)"]
+                FIS["Alvo FIS<br/>(disrupt-connectivity)"]
+            end
+        end
+    end
+
+    subgraph OnPrem["On-Premises (vSphere - Datacenter)"]
+        subgraph HN1["Hybrid Node 1 (192.168.3.51)"]
+            PH1["server-hybrid-1<br/>(SERVER, 2 réplicas)"]
+            CH["client-hybrid<br/>→ local"]
+            CXN["client-hybrid-to-hybrid<br/>→ Node 2"]
+        end
+        subgraph HN2["Hybrid Node 2 (192.168.3.52)"]
+            PH2["server-hybrid-2<br/>(SERVER)"]
+        end
+        VPN_EP["Endpoint VPN<br/>(pfSense)"]
+    end
+
+    Internet(("Internet")) --> ALB
+    ALB --> PH1
+    CP -. "heartbeat kubelet" .-> HN1
+    GW <== "VXLAN" ==> HN1
+    GW <== "VXLAN" ==> HN2
+    VPC <-- "VPN S2S" --> VPN_EP
+    CC -. "cross-cluster" .-> PH1
+    CXN -. "cross-node (on-prem)" .-> PH2
+
+    style FIS fill:#ff6b6b,stroke:#c0392b,color:#fff
+    style PH1 fill:#27ae60,stroke:#1e8449,color:#fff
+    style PH2 fill:#1B5E20,stroke:#0d3311,color:#fff
+    style PC fill:#2980b9,stroke:#1a5276,color:#fff
+    style CP fill:#f39c12,stroke:#d68910,color:#fff</pre>
+<h2 id="convenção-de-nomes-dos-pods">Convenção de nomes dos Pods</h2>
+<p>Os nomes são desenhados para que <code>kubectl get pods</code> já
+diga ONDE roda e O QUE faz:</p>
+<table>
+<colgroup>
+<col style="width: 32%" />
+<col style="width: 32%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+</colgroup>
+<thead>
+<tr>
+<th>Nome do Pod</th>
+<th>Localização</th>
+<th>Papel</th>
+<th>Chama</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>server-hybrid-1</strong></td>
+<td>Hybrid Node 1 (on-prem)</td>
+<td>Server</td>
+<td>-</td>
+</tr>
+<tr>
+<td><strong>server-hybrid-2</strong></td>
+<td>Hybrid Node 2 (on-prem)</td>
+<td>Server</td>
+<td>-</td>
+</tr>
+<tr>
+<td><strong>server-cloud</strong></td>
+<td>Amazon EKS (Região AWS)</td>
+<td>Server</td>
+<td>-</td>
+</tr>
+<tr>
+<td><strong>client-hybrid</strong></td>
+<td>Hybrid Node 1 (on-prem)</td>
+<td>Client</td>
+<td>→ server-hybrid-1 (local)</td>
+</tr>
+<tr>
+<td><strong>client-hybrid-to-hybrid</strong></td>
+<td>Hybrid Node 1 (on-prem)</td>
+<td>Client</td>
+<td>→ server-hybrid-2 (cross-node)</td>
+</tr>
+<tr>
+<td><strong>client-cloud-to-hybrid</strong></td>
+<td>Amazon EKS (Região AWS)</td>
+<td>Client</td>
+<td>→ server-hybrid-1 (cross-cluster)</td>
+</tr>
+</tbody>
+</table>
+<p>Padrão: <code>{papel}-{localização}[-to-{alvo}]</code></p>
+<h2 id="topologia-de-rede-do-lab-referência-do-home-lab">Topologia de
+rede do Lab (referência do home lab)</h2>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 45%" />
+<col style="width: 29%" />
+</colgroup>
+<thead>
+<tr>
+<th>Rede</th>
+<th>CIDR / IP</th>
+<th>Papel</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Home LAN</td>
+<td>192.168.1.0/24</td>
+<td>Rede da estação (Mac)</td>
+</tr>
+<tr>
+<td>pfSense WAN</td>
+<td>192.168.1.5</td>
+<td>Uplink do pfSense na home LAN</td>
+</tr>
+<tr>
+<td>pfSense LAN</td>
+<td>192.168.2.1</td>
+<td>Rede do Lab 1</td>
+</tr>
+<tr>
+<td>Lab 2 LAN</td>
+<td>192.168.3.0/24</td>
+<td>Rede dos Hybrid Nodes (RemoteNodeNetwork)</td>
+</tr>
+<tr>
+<td>Hybrid Node 1</td>
+<td>192.168.3.51</td>
+<td>VM Ubuntu 24.04 (vSphere)</td>
+</tr>
+<tr>
+<td>Hybrid Node 2</td>
+<td>192.168.3.52</td>
+<td>VM Ubuntu 24.04 (vSphere)</td>
+</tr>
+<tr>
+<td>Remote Pod CIDR</td>
+<td>10.201.0.0/16</td>
+<td>Pods nos hybrid nodes</td>
+</tr>
+<tr>
+<td>MetalLB VIP pool</td>
+<td>192.168.3.240-250</td>
+<td>VIPs LoadBalancer on-prem</td>
+</tr>
+</tbody>
+</table>
+<h3 id="acesso-da-estação-ao-lab">Acesso da estação ao lab</h3>
+<p>Rota estática persistente (o <code>route add</code> comum some no
+reboot):</p>
+<p>:::code{showCopyAction=true showLineNumbers=false language=bash} sudo
+networksetup -setadditionalroutes “Dell Universal Dock D6000”<br />
+192.168.3.0 255.255.255.0 192.168.1.5 :::</p>
+<p>SSH nos nodes (user <code>lopbruno</code>, chave
+<code>id_ecdsa</code>):</p>
+<p>:::code{showCopyAction=true showLineNumbers=false language=bash} ssh
+-i ~/.ssh/id_ecdsa lopbruno@192.168.3.51 :::</p>
+<p>::alert<span type="warning">IP residencial dinâmico: se o IP público
+mudar, os tunnels VPN caem. Fix sem tocar no pfSense: criar CGW com o IP
+novo e mover a VPN via <code>aws ec2 modify-vpn-connection</code>
+(preserva tunnel IPs e PSKs). Runbook completo em
+environment-status.</span></p>
+<h2 id="pré-requisitos">Pré-requisitos</h2>
+<ul>
+<li>AWS CLI v2 + isengardcli (conta DevOps 923739522526)</li>
+<li>kubectl, Helm 3, Terraform &gt;= 1.5</li>
+<li>Cluster EKS <code>llm-vmware-hybrid</code> (sa-east-1) com Hybrid
+Nodes já configurado</li>
+</ul>
+<p>Configurar o kubectl:</p>
+<p>:::code{showCopyAction=true showLineNumbers=false language=bash} aws
+eks update-kubeconfig –name llm-vmware-hybrid –region sa-east-1 :::</p>
+<h2 id="setup---passo-1-validar-pré-requisitos">Setup - Passo 1: Validar
+pré-requisitos</h2>
+<p>:::code{showCopyAction=true showLineNumbers=false language=bash}
+chmod +x scripts/00-prerequisites.sh ./scripts/00-prerequisites.sh
+:::</p>
+<p>O script valida: kubectl, node hybrid Ready, Hybrid Node Gateway, AWS
+LB Controller, Cilium, VPN (com detecção automática de IP público
+divergente).</p>
+<h2 id="setup---passo-2-rotular-os-hybrid-nodes">Setup - Passo 2:
+Rotular os Hybrid Nodes</h2>
+<p>Os manifests usam <code>nodeSelector: hybrid-node-id</code>. Rotular
+ANTES de fazer deploy:</p>
+<p>:::code{showCopyAction=true showLineNumbers=false language=bash}
+kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid kubectl label
+node <NODE_1> hybrid-node-id=node1 :::</p>
+<h2 id="setup---passo-3-provisionar-a-infra-do-fis-terraform">Setup -
+Passo 3: Provisionar a infra do FIS (Terraform)</h2>
+<p>:::code{showCopyAction=true showLineNumbers=false language=bash} cd
+terraform/ terraform init terraform apply<br />
+-var=“cluster_name=llm-vmware-hybrid”<br />
+-var=“region=sa-east-1”<br />
+-var=“onprem_node_cidr=192.168.3.0/24”<br />
+-var=“remote_pod_cidr=10.201.0.0/16” :::</p>
+<p>Anote o output <code>fis_experiment_template_id</code> - será usado
+nos cenários de falha.</p>
+<h2 id="setup---passo-4-deploy-dos-servers-e-clients">Setup - Passo 4:
+Deploy dos servers e clients</h2>
+<p>:::code{showCopyAction=true showLineNumbers=false language=bash}
+kubectl apply -f manifests/01-server-hybrid-1.yaml # server on-prem Node
+1 kubectl apply -f manifests/03-server-cloud.yaml # server cloud kubectl
+apply -f manifests/04-clients.yaml # 3 clients kubectl get pods -n
+demo-stone -o wide :::</p>
+<h2 id="setup---passo-5-metallb-lb-on-premises">Setup - Passo 5: MetalLB
+(LB on-premises)</h2>
+<p>MetalLB em modo L2 é o padrão validado pela AWS para estabilidade
+durante desconexões. Fornece o VIP local (papel análogo ao F5 no design
+de produção).</p>
+<p>:::code{showCopyAction=true showLineNumbers=false language=bash} helm
+repo add metallb https://metallb.github.io/metallb helm repo update helm
+install metallb metallb/metallb<br />
+–namespace metallb-system –create-namespace<br />
+–set ‘speaker.tolerations[0].key=node.kubernetes.io/unreachable’<br />
+–set ‘speaker.tolerations[0].operator=Exists’<br />
+–set ‘speaker.tolerations[0].effect=NoExecute’</p>
+<p>kubectl apply -f manifests/06-metallb-onprem-lb.yaml kubectl get svc
+server-hybrid-lb -n demo-stone :::</p>
+<h2 id="setup---passo-6-alb-ingress">Setup - Passo 6: ALB Ingress</h2>
+<p>:::code{showCopyAction=true showLineNumbers=false language=bash}
+kubectl apply -f manifests/05-ingress-alb.yaml kubectl wait
+–for=jsonpath=‘{.status.loadBalancer.ingress[0].hostname}’<br />
+ingress/demo-ingress -n demo-stone –timeout=180s :::</p>
+<p>::alert<span type="warning">O ALB com target-type ip precisa que o
+security group do cluster/nodes permita o SG do ALB na porta 9898, e que
+as subnets do ALB tenham rota para o pod CIDR (10.201.0.0/16). Ver
+troubleshooting em environment-status.</span></p>
+<h2 id="setup---passo-7-validar-tudo-dry-run">Setup - Passo 7: Validar
+tudo (dry-run)</h2>
+<p>Antes da call, rode o validador para confirmar que cada cenário
+funciona end-to-end, e depois o RESET para deixar o ambiente no baseline
+limpo:</p>
+<p>:::code{showCopyAction=true showLineNumbers=false language=bash}
+export FIS_TEMPLATE_ID=<id do terraform output> chmod +x
+scripts/validate-demo.sh ./scripts/validate-demo.sh # menu interativo -
+opção A roda tudo + reset :::</p>
+<p>::alert<span type="info">O validate-demo.sh NÃO é usado na demo ao
+vivo. Ele só valida o ambiente. A demo é apresentada passo a passo pela
+Parte 2 (Demo Runbook), você mostrando cada comando. O validador só faz
+operações reversíveis e a opção RESET garante baseline limpo.</span></p>
+<h2 id="nota-segundo-hybrid-node">Nota: segundo Hybrid Node</h2>
+<p>Adicionar o Node 2 é <strong>prep</strong>, não passo da demo. Ver
+<code>setup-vm2.md</code>. É necessário apenas para o cenário cross-node
+(Node1→Node2).</p>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'default' });
+</script>
+</body>
+</html>
