@@ -1,0 +1,110 @@
+# Cloud Bursting (simples e realista) - overflow do DC para a AWS
+#
+# CONCEITO: uma app web da plataforma roda normalmente NO DATACENTER (hybrid).
+# Quando a carga sobe além da capacidade local, o HPA escala réplicas e os pods
+# TRANSBORDAM para os cloud nodes da AWS (burst). Quando a carga cai, voltam a
+# consolidar no DC. É cloud bursting sem depender de GPU/LLM - o padrão de uma
+# plataforma servindo workloads web.
+#
+# COMO O OVERFLOW FUNCIONA:
+#   nodeAffinity PREFERRED (não required) para hybrid + topologySpread.
+#   O scheduler prefere on-prem; quando o hybrid enche (CPU/pods), coloca o
+#   excedente nos cloud nodes automaticamente. Zero config extra de burst -
+#   é scheduling nativo do Kubernetes.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: burst-app
+  namespace: demo-stone
+  labels:
+    app: burst-app
+    demo: hybrid-resilience
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: burst-app
+  template:
+    metadata:
+      labels:
+        app: burst-app
+        demo: hybrid-resilience
+    spec:
+      # PREFERE on-prem (peso 100). Quando o hybrid enche, transborda pro cloud.
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: eks.amazonaws.com/compute-type
+                    operator: In
+                    values: ["hybrid"]
+      tolerations:
+        - key: "node.kubernetes.io/unreachable"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 3600
+        - key: "node.kubernetes.io/not-ready"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 3600
+        - key: "node.cilium.io/agent-not-ready"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+        - name: app
+          image: ghcr.io/stefanprodan/podinfo:6.7.1
+          ports:
+            - containerPort: 9898
+          env:
+            - name: PODINFO_UI_MESSAGE
+              value: "Burst App - roda no DC, transborda pra AWS sob carga"
+          # requests altos de propósito: cada pod "ocupa" bastante CPU do node,
+          # então poucas réplicas já enchem o hybrid node e forçam o overflow
+          resources:
+            requests:
+              cpu: 500m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: burst-app
+  namespace: demo-stone
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9898
+      targetPort: 9898
+  selector:
+    app: burst-app
+---
+# HPA: escala de 2 até 10 réplicas conforme CPU. As réplicas que não couberem
+# no hybrid node vão para os cloud nodes (burst).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: burst-app
+  namespace: demo-stone
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: burst-app
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60   # curto p/ demo (consolida rápido no DC)

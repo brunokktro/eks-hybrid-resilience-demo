@@ -141,6 +141,40 @@ Terminal 3 (CROSS-CLUSTER): 200 ✓  TIMEOUT ✗  TIMEOUT ✗  <- esperado (link
 
 ::alert[Ponto de fala: "O datacenter continua operando de forma independente, incluindo comunicação ENTRE nodes on-prem. Só o link cross-cluster é afetado - e isso é aceitável, porque o DC é autônomo. É exatamente o requisito do Rogério: se a AWS cair, o DC não para."]{type="info"}
 
+## Fase 3-cache: Pod crash durante a desconexão - image cache (5 min)
+
+**Ponto BÁSICO e crítico:** um pod que crasha durante a desconexão REINICIA?
+SIM - o kubelet gerencia `restartPolicy` localmente, sem API server, DESDE QUE
+a imagem esteja no cache local do containerd.
+
+Com a desconexão ativa (FIS ou bloqueio iptables), mate o container no node:
+
+:::code{showCopyAction=true showLineNumbers=false language=bash}
+# Via SSH no node 1 - matar o processo do podinfo (simula crash da app)
+ssh lopbruno@192.168.3.51
+sudo pkill -f "podinfo" && echo "container morto"
+:::
+
+Observe o restart local (segundos depois):
+
+:::code{showCopyAction=true showLineNumbers=false language=bash}
+# O kubelet reinicia o container com a imagem do cache - sem falar com a AWS
+curl -s -o /dev/null -w "app de volta: HTTP %{http_code}\n" \
+  --max-time 5 http://192.168.3.240/healthz
+:::
+
+::alert[Ponto de fala: "O kubelet é autônomo para reiniciar containers - restartPolicy funciona sem control plane. O requisito é a IMAGEM estar no cache local do containerd. Por isso duas configurações são obrigatórias em produção: pre-pull das imagens críticas em todos os nodes, e GC do containerd configurado para não descartar imagens (discard_unpacked_layers=false). Sem isso, um crash durante desconexão vira indisponibilidade - o node não consegue puxar do ECR."]{type="info"}
+
+**Configuração do containerd via nodeadm (prep - já aplicável no nodeConfig):**
+
+:::code{showCopyAction=true showLineNumbers=false language=yaml}
+spec:
+  containerd:
+    config: |
+      [plugins."io.containerd.grpc.v1.cri".containerd]
+      discard_unpacked_layers = false
+:::
+
 ## Fase 4: Desconexão durante provisioning (10 min)
 
 Ainda desconectado, tentar escalar de 2 para 4 réplicas:
@@ -204,16 +238,67 @@ já fica protegido por design.
 | Restart de node offline: pods não voltam | Réplicas multi-node (Cenário 4) |
 | ALB region-originated cai na desconexão | LB local (MetalLB/F5) para tráfego do DC |
 
+## Fase 6: Cloud Bursting - overflow do DC para a AWS (10 min)
+
+Cenário complementar (não é resiliência, é elasticidade): a app da plataforma
+roda no DATACENTER e, sob pico de carga, transborda para a AWS. Simples e
+realista - sem GPU/LLM, apenas scheduling nativo do Kubernetes.
+
+::alert[Este cenário DEPENDE da conectividade com a AWS (oposto da resiliência). Bursting e resiliência são complementares: um usa a nuvem quando ela está lá, o outro sobrevive quando ela não está.]{type="info"}
+
+### Estado normal: app roda no DC
+
+:::code{showCopyAction=true showLineNumbers=false language=bash}
+kubectl apply -f manifests/08-cloud-bursting.yaml
+kubectl get pods -n demo-stone -l app=burst-app -o wide
+:::
+
+As 2 réplicas ficam no hybrid node (nodeAffinity `preferred` para on-prem).
+
+### Pico de carga: burst para a AWS
+
+:::code{showCopyAction=true showLineNumbers=false language=bash}
+# Simula o pico escalando a app
+kubectl scale deploy burst-app -n demo-stone --replicas=12
+sleep 30
+# Ver a distribuição: hybrid enche, o excedente vai pros cloud nodes
+kubectl get pods -n demo-stone -l app=burst-app -o wide \
+  --no-headers | awk '{print $7}' | sort | uniq -c
+:::
+
+**Resultado validado:** ~7 pods permanecem no DC (hybrid), ~3 transbordam para
+os cloud nodes da AWS. O overflow é automático - `preferred` affinity, não
+`required`: o scheduler prefere on-prem, mas usa a nuvem quando o DC enche.
+
+::alert[Ponto de fala: "Sua plataforma serve a carga normal no datacenter, com o custo e a latência do hardware que vocês já têm. Quando chega um pico - Black Friday, campanha - a capacidade transborda para a AWS automaticamente, sem reconfigurar nada. É elasticidade sob demanda mantendo o baseline no DC."]{type="info"}
+
+### Fim do pico: consolidação de volta ao DC
+
+:::code{showCopyAction=true showLineNumbers=false language=bash}
+kubectl scale deploy burst-app -n demo-stone --replicas=2
+:::
+
+::alert[Nuance importante (seja transparente): o scale-down remove pods mas NÃO move os sobreviventes de volta - a affinity só age no scheduling. Para consolidar ativamente no DC use `kubectl rollout restart deploy/burst-app` (recria os pods, que voltam pro hybrid por preferência) ou o Descheduler em produção. Validado: pós rollout restart, 100% de volta ao hybrid.]{type="warning"}
+
+### Evolução em produção (mencionar, não demonstrar)
+
+Este demo usa cloud nodes já existentes (overflow). Em produção, para provisionar
+capacidade cloud SOB DEMANDA e destruir depois: **Karpenter + Spot** disparado
+por **KEDA/Prometheus** monitorando a carga local. É a mesma estratégia do
+sample oficial aws-samples/sample-eks-hybrid-nodes-gpu-burst-scaling, aplicável
+a workloads web (não só LLM). Pode ser uma demo dedicada.
+
 ## Perguntas prováveis do cliente (preparação)
 
 ### 1. "E storage persistente? Nossos workloads stateful?"
-**GAP mais provável.** O EBS CSI driver NÃO está na lista oficial de add-ons
-compatíveis com Hybrid Nodes (EBS é preso à AZ). O único CSI de storage AWS na
-lista é o FSx CSI - mas é storage DE REDE dependente da região (falha na
-desconexão). Para stateful on-prem resiliente a disconnect: storage local do DC
-via CSI próprio (SAN/NAS), ou Longhorn/Ceph/OpenEBS. Validar com o time de
-storage da Stone qual CSI o array deles oferece. A demo usa workloads stateless
-(o padrão recomendado para a camada de apps do IDP).
+Stateful FUNCIONA em Hybrid Nodes - o que NÃO funciona é EBS (o EBS CSI não
+está na lista de add-ons compatíveis; volume é preso à AZ). Opções locais:
+(1) **hostPath** - simples, preso ao node (é como o sample oficial de GPU
+burst persiste modelos LLM de ~3GB localmente); (2) **local PersistentVolumes**
+com nodeAffinity; (3) **CSI de terceiros** (Longhorn/Ceph/OpenEBS ou o CSI do
+storage array do DC). FSx CSI está na lista, mas é storage de rede dependente
+da região (falha na desconexão). Ação: validar com o time de storage da Stone
+qual CSI o array deles oferece.
 Fonte: docs.aws.amazon.com/eks/latest/userguide/hybrid-nodes-add-ons.html
 
 ### 2. "Como fica a observabilidade DURANTE a desconexão? Ficamos cegos?"
