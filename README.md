@@ -146,12 +146,32 @@ client-cloud-to-hybrid-xxxxx      1/1    Running  ip-10-43.. (EKS Region)
 **Workstation access to the lab network** (Mac is on 192.168.1.0/24, nodes on 192.168.3.0/24):
 
 ```bash
-# Static route via pfSense WAN interface (run on the Mac):
-sudo route add -net 192.168.3.0/24 192.168.1.5
+# PERSISTENT static route via pfSense WAN (survives reboots).
+# NOTE: plain 'route add' is LOST on reboot - use networksetup instead:
+networksetup -listallhardwareports   # find the service name for your active NIC
+sudo networksetup -setadditionalroutes "Dell Universal Dock D6000" \
+  192.168.3.0 255.255.255.0 192.168.1.5
 
-# Then SSH to the nodes:
-ssh ubuntu@192.168.3.51
+# Then SSH to the nodes - user is lopbruno (NOT ubuntu), key is ~/.ssh/id_ecdsa:
+ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51
 ```
+
+**Lab access matrix:**
+
+| Target | Address | Access | Notes |
+|--------|---------|--------|-------|
+| Hybrid Node 1 VM | 192.168.3.51 | `ssh -i ~/.ssh/id_ecdsa lopbruno@` | hostname `eks-hybrid-lab2`. sudo requires password |
+| pfSense UI | http://192.168.1.5 (WAN) or http://192.168.2.1 (LAN) | user `admin` | HTTP port 80 (not 443). WAN access requires firewall rule |
+| EKS cluster | via AWS API | `aws eks update-kubeconfig --name llm-vmware-hybrid --region sa-east-1` | isengardcli creds, account DevOps |
+| vCenter | Bruno's home lab | UI (manual actions) | VM power, console, snapshots, NIC disconnect |
+
+> **Snapshot warning (learned the hard way):** reverting the hybrid node VM to a
+> pre-registration snapshot silently destroys kubelet/containerd/SSM state while
+> the stale node object remains in the cluster (NotReady ghost). If the VM state
+> and the cluster disagree, check ON the VM whether kubelet/nodeadm config exist
+> (`ls /var/lib/kubelet /etc/nodeadm`) before debugging network/VPN. Recovery:
+> delete the ghost node object, deregister the SSM instance, create a fresh SSM
+> activation, and re-run `nodeadm install` + `nodeadm init`.
 
 > Note: pfSense blocks WAN-initiated traffic by default. If SSH times out after
 > adding the route, add a firewall rule on pfSense: WAN interface, allow source
