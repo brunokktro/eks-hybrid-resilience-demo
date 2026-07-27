@@ -96,9 +96,36 @@ aws fis start-experiment \
   --region sa-east-1
 :::
 
-::alert[Comportamento por tipo de endpoint EKS: se o kubelet alcança o endpoint PÚBLICO do cluster via internet (caso deste lab), o node PERMANECE Ready durante o FIS - a falha derruba apenas o data path (cross-cluster/VXLAN). Para demonstrar o NotReady + tolerations, desconecte a NIC da VM no vCenter (corta tudo). Em ambientes com endpoint privado + Direct Connect (produção típica), o FIS derruba ambos.]{type="warning"}
+::alert[Comportamento por tipo de endpoint EKS: se o kubelet alcança o endpoint PÚBLICO do cluster via internet (caso deste lab), o node PERMANECE Ready durante o FIS - a falha derruba apenas o data path (cross-cluster/VXLAN). Em ambientes com endpoint privado + Direct Connect (produção típica), o FIS derruba ambos os paths de uma vez.]{type="warning"}
 
-Acompanhar o estado do node (NotReady apenas se o control plane path cair - ver alerta acima):
+### Fase 3-extra: NotReady + Tolerations (bloqueio cirúrgico do control plane)
+
+Para demonstrar o node NotReady SEM afetar a LAN local (NÃO desconecte a NIC -
+isso mataria os paths locais e não reflete o cenário real), bloqueie apenas o
+acesso do kubelet ao endpoint do EKS, no próprio node:
+
+:::code{showCopyAction=true showLineNumbers=false language=bash}
+# Descobrir os IPs do endpoint EKS
+dig +short <ID_DO_CLUSTER>.gr7.sa-east-1.eks.amazonaws.com
+
+# No node (via SSH): bloquear os 2 IPs
+sudo iptables -I OUTPUT -d <IP1> -j DROP
+sudo iptables -I OUTPUT -d <IP2> -j DROP
+:::
+
+**Resultado validado (teste real):** node NotReady em ~60s, taint
+`unreachable:NoExecute` aplicado, pods continuam Running (tolerations!) e a LAN
+local segue 100% (LOCAL, CROSS-NODE e VIP = HTTP 200). Reverter:
+
+:::code{showCopyAction=true showLineNumbers=false language=bash}
+sudo iptables -D OUTPUT -d <IP1> -j DROP
+sudo iptables -D OUTPUT -d <IP2> -j DROP
+# Node volta a Ready em ~15-20s
+:::
+
+::alert[Ponto de fala: "Bloqueamos APENAS o caminho do node até o control plane - exatamente o que acontece quando o link com a AWS cai. O node fica NotReady na visão do cluster, mas o datacenter continua 100% operacional: os pods processam, o LB local responde e a comunicação entre nodes segue intacta."]{type="info"}
+
+Acompanhar o estado do node:
 
 :::code{showCopyAction=true showLineNumbers=false language=bash}
 watch -n 5 'kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid'
