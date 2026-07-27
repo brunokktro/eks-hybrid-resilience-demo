@@ -19,14 +19,17 @@ reproduzir/recuperar o ambiente.
 | clients (local, cross-node, cross-cluster) | ✓ Running | - |
 | **Path LOCAL** (Node1→Node1) | ✓ HTTP 200 | curl pod IP + ClusterIP |
 | **Path CROSS-CLUSTER** (cloud→hybrid) | ✓ HTTP 200 | client-cloud-to-hybrid logs |
-| **Path CROSS-NODE** (Node1→Node2) | ⏳ pendente | aguarda VM 2 |
+| **Path CROSS-NODE** (Node1→Node2) | ✓ HTTP 200 | Node 2 `mi-0d8945ada3cc4f12b` Ready |
 | **On-prem LB** (MetalLB VIP 192.168.3.240) | ✓ HTTP 200 | curl da LAN |
 | FIS experiment template | ✓ `EXTCnS3KTdAc2AEME` | terraform apply |
 | **ALB ingress** (Cenário 3a) | ⚠ parcial | cloud target healthy; hybrid target unhealthy |
 
 ## Pendências para o dry-run
 
-1. **VM 2** - criar no vCenter (ver `setup-vm2.md`) para ativar o path cross-node
+1. ~~**VM 2**~~ ✓ CONCLUÍDO - VM 2 criada VIA GOVC/SSH no ESXi (sem UI!):
+   seed ISO cloud-init (autoinstall) + vmkfstools + vim-cmd registervm.
+   Node 2 = `mi-0d8945ada3cc4f12b` (192.168.3.52) Ready, server-hybrid-2
+   Running, static pod Running (hostPort 8080 HTTP 200), cross-node HTTP 200.
 2. **ALB → hybrid target** - health check falha porque a rota do pod CIDR
    (10.201.0.0/16) existe em apenas 1 das 3 route tables da VPC; as subnets do
    ALB precisam da rota apontando para o gateway leader ENI. Não-bloqueante: a
@@ -93,3 +96,11 @@ VPN, que nem sempre está estável). Para ver logs dos clients no hybrid node
 durante a demo, use SSH direto no node ou valide via os pods no lado cloud
 (cujo kubelet é alcançável). Os clients no lado cloud (`client-cloud-to-hybrid`)
 têm logs acessíveis via `kubectl logs` normalmente.
+
+### 8. Criação da VM 2 100% via CLI (ESXi Free)
+ESXi Free bloqueia writes via API (govc vm.create falha com licença). O caminho
+é WRITE via SSH no host: `vmkfstools -c 60G` (disco), `.vmx` gerado + scp,
+`vim-cmd solo/registervm` + `vim-cmd vmsvc/power.on`. O boot da ISO do Ubuntu
+live-server com um seed ISO CIDATA (user-data autoinstall) instala o SO sem
+interação: hostname, IP estático, usuário, chave SSH e até o download do nodeadm
+(late-commands). Réplica exata do método usado na VM 1 (lab2-seed.iso).
