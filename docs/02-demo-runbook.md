@@ -204,6 +204,58 @@ já fica protegido por design.
 | Restart de node offline: pods não voltam | Réplicas multi-node (Cenário 4) |
 | ALB region-originated cai na desconexão | LB local (MetalLB/F5) para tráfego do DC |
 
+## Perguntas prováveis do cliente (preparação)
+
+### 1. "E storage persistente? Nossos workloads stateful?"
+**GAP mais provável.** O EBS CSI driver NÃO está na lista oficial de add-ons
+compatíveis com Hybrid Nodes (EBS é preso à AZ). O único CSI de storage AWS na
+lista é o FSx CSI - mas é storage DE REDE dependente da região (falha na
+desconexão). Para stateful on-prem resiliente a disconnect: storage local do DC
+via CSI próprio (SAN/NAS), ou Longhorn/Ceph/OpenEBS. Validar com o time de
+storage da Stone qual CSI o array deles oferece. A demo usa workloads stateless
+(o padrão recomendado para a camada de apps do IDP).
+Fonte: docs.aws.amazon.com/eks/latest/userguide/hybrid-nodes-add-ons.html
+
+### 2. "Como fica a observabilidade DURANTE a desconexão? Ficamos cegos?"
+Métricas/logs para CloudWatch/AMP param de fluir durante o disconnect
+(dependência regional). Mitigação (best practices): backend LOCAL secundário
+(Prometheus local + ADOT dual-exporter) e `crictl` para troubleshooting sem
+control plane. Do lado AWS, alarme CloudWatch em NodeNotReady (control plane
+logs) detecta a desconexão.
+
+### 3. "Pod que CRASHA durante a desconexão reinicia?"
+SIM - diferente do restart de NODE (Cenário 4). O kubelet gerencia restartPolicy
+localmente, sem API server, DESDE QUE a imagem esteja no cache do containerd.
+Por isso: pre-pull de imagens críticas + GC do containerd configurado para não
+descartar imagens (`discard_unpacked_layers=false`).
+
+### 4. "E se a desconexão durar mais de 12 horas?"
+SSM: credencial de 1h, para de renovar desconectado (reconexão pode levar até
+30min de backoff - restart do agent força). IAM Roles Anywhere: até 12h
+configurável, reconexão em segundos. IMPORTANTE: os PODS continuam rodando
+independente de credencial expirada - ela afeta só a comunicação node↔AWS.
+Para janelas longas: IRA com durationSeconds alto.
+
+### 5. "Nosso IDP usa admission webhooks (policy engines). O que acontece?"
+**Gotcha de produção:** se um webhook backend roda nos hybrid nodes e o DC
+desconecta, o API server não o alcança. Com `failurePolicy: Fail`, isso BLOQUEIA
+operações no cluster INTEIRO (não só on-prem). Recomendações: webhooks críticos
+em nodes cloud, ou `failurePolicy: Ignore` + réplicas nos dois lados. Revisar os
+webhooks do Caravela (Kyverno/OPA/etc) nesse critério.
+
+### 6. "E o cloud bursting que discutimos na reunião?"
+Estratégia validada em outro lab (Karpenter + Spot quando o hardware local
+satura, via KEDA/Prometheus). Não faz parte desta demo de resiliência - pode ser
+uma demo #2. Nota: bursting DEPENDE da conectividade com a região - complementar
+à resiliência, não substituto.
+
+### 7. "Chicago e Atlanta: um cluster para os dois DCs?"
+Recomendação: **um cluster por DC** (blast radius, upgrades independentes,
+latência). Se optarem por cluster único com nodes nos dois DCs: zone labels por
+DC são OBRIGATÓRIAS - o Kubernetes cancela evictions quando uma zona INTEIRA
+fica unreachable, protegendo cada DC. Requisito de rede: até 200ms RTT e
+100Mbps+ por DC (docs oficiais).
+
 ## Cleanup
 
 :::code{showCopyAction=true showLineNumbers=false language=bash}
