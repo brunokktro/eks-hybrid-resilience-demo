@@ -23,8 +23,15 @@ spec:
         location: cloud
         demo: hybrid-resilience
     spec:
-      nodeSelector:
-        eks.amazonaws.com/compute-type: ec2
+      # Cloud nodes: EC2 nodes do NOT carry the compute-type label
+      # (only hybrid/fargate do). Select "not hybrid" via DoesNotExist.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: eks.amazonaws.com/compute-type
+                    operator: DoesNotExist
       containers:
         - name: podinfo
           image: ghcr.io/stefanprodan/podinfo:6.7.1
