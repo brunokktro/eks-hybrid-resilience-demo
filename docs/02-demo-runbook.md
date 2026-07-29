@@ -21,6 +21,29 @@ comando, explicando cada um - não use o validador automatizado aqui.
 | 3c | LB On-Premises (MetalLB VIP) | curl ao VIP | Entrada local independente da AWS |
 | 4 | Restart de node DURANTE desconexão | vCenter restart | Pods não voltam até reconectar; réplicas multi-node salvam |
 
+## Fase 0: Preparar o ambiente (2 min)
+
+Antes de tudo, confirmar em qual cluster estamos apontando. Numa rotina de
+várias demos, apontar para o cluster errado é o erro mais comum - sempre valide.
+
+Listar os contextos do kubeconfig:
+
+```bash
+kubectl config get-contexts
+```
+
+Garantir/renovar o contexto do cluster da demo (define o contexto ativo):
+
+```bash
+aws eks update-kubeconfig --name llm-vmware-hybrid --region sa-east-1
+```
+
+Confirmar o contexto atual antes de seguir:
+
+```bash
+kubectl config current-context
+```
+
 ## Fase 1: Estado atual (5 min)
 
 **O que mostrar ao cliente:**
@@ -37,7 +60,28 @@ Os pods rodando dos dois lados (verde = on-prem, azul = cloud):
 kubectl get pods -n demo-stone -o wide
 ```
 
-As tolerations que mantêm os pods vivos na desconexão:
+As tolerations que mantêm os pods vivos na desconexão. Mostre o manifesto para
+o cliente entender o mecanismo, não só o efeito:
+
+```yaml
+tolerations:
+  # Quando o node fica unreachable, o controller-manager adiciona o taint
+  # node.kubernetes.io/unreachable. Sem toleration, o pod e' evictado em 300s.
+  # Com toleration + tolerationSeconds, o pod sobrevive pelo tempo definido.
+  - key: "node.kubernetes.io/unreachable"
+    operator: "Exists"
+    effect: "NoExecute"
+    tolerationSeconds: 3600   # 1h no demo; producao: omitir para indefinido
+  - key: "node.kubernetes.io/not-ready"
+    operator: "Exists"
+    effect: "NoExecute"
+    tolerationSeconds: 3600
+  - key: "node.cilium.io/agent-not-ready"
+    operator: "Exists"
+    effect: "NoSchedule"
+```
+
+Confirmar que os pods em execução têm essas tolerations aplicadas:
 
 ```bash
 kubectl get deploy server-hybrid-1 -n demo-stone \
