@@ -128,6 +128,34 @@ client-cloud-to-hybrid-xxxxx      1/1    Running  ip-10-43.. (EKS Region)
 
 ---
 
+## Layer Model
+
+| Layer | Contents | Lifecycle |
+|-------|----------|-----------|
+| Long-lived lab infra | EKS cluster, VPC, TGW + Site-to-Site VPN, Gateway Nodes, hybrid node VMs (vSphere) | Persistent - never torn down between runs |
+| Demo infra (Terraform) | FIS role, managed prefix list, FIS experiment template, CloudWatch log group | `terraform apply/destroy` per demo cycle |
+| Demo workloads (manifests) | servers (hybrid-1/2, cloud), clients (local/cross-node/cross-cluster), ALB ingress, MetalLB VIP, static pod, burst-app | `kubectl apply` / `99-cleanup.sh` |
+| Live "knobs" | FIS start-experiment, iptables block, kubectl scale | Triggered live during the demo |
+
+## Why This Maps to the Customer Use Case
+
+Stone's Caravela (Kubernetes-based IDP) must run in the Chicago and Atlanta
+datacenters with a hard requirement: **if AWS goes down, the datacenter must not
+stop**. This demo maps directly:
+
+- **Scenario 1/1b (disconnect resilience)** = the core requirement. Workloads on-prem
+  keep serving, including cross-node communication within the DC, when the AWS
+  link is lost.
+- **Scenario 3c (MetalLB VIP)** = analogous to Stone's planned NodePort + F5 static
+  entry point. The local LB keeps serving with zero AWS dependency.
+- **Scenario 2/4 (limitations)** = transparent about what does NOT work (new
+  scheduling during disconnect, node restart offline), with the mitigation:
+  pre-sized multi-node replicas.
+- **Cloud bursting (overflow)** = the elasticity story: baseline in the DC, burst
+  to AWS on load spikes.
+
+---
+
 ## Prerequisites
 
 - AWS CLI v2 configured with credentials for the target account
@@ -1176,10 +1204,41 @@ eks-hybrid-resilience-demo/
 │   ├── 04-clients.yaml                 # ALL 3 CLIENTS (local + cross-node + cross-cluster)
 │   ├── 05-ingress-alb.yaml            # ALB Ingress configuration
 │   ├── 06-metallb-onprem-lb.yaml       # On-prem LB: MetalLB IP pool + L2 + LoadBalancer svc
-│   └── 07-static-pod-node2.yaml        # Static pod (NOT kubectl-applied - goes on Node 2 disk)
+│   ├── 07-static-pod-node2.yaml        # Static pod (NOT kubectl-applied - goes on Node 2 disk)
+│   └── 08-cloud-bursting.yaml          # Burst app: overflow hybrid -> cloud under load
 ├── terraform/
 │   └── main.tf                         # FIS role, prefix list, disrupt-connectivity template
-└── scripts/
-    ├── 00-prerequisites.sh             # Validate cluster readiness
-    └── demo-live.sh                    # Interactive demo script (customer-facing)
+├── scripts/
+│   ├── lib.sh                          # Shared helpers (banner/step/talk/pause/run)
+│   ├── 00-prerequisites.sh             # Validate cluster readiness
+│   ├── validate-demo.sh                # Dry-run validator (NOT for live demo) + reset
+│   ├── validate-spring-clean.sh        # Audit auto-delete=no tags
+│   └── 99-cleanup.sh                   # Reverse-order teardown + orphan audit
+├── docs/
+│   ├── 01-preparacao-setup.md          # Part 1: prep/setup (pt-BR)
+│   ├── 02-demo-runbook.md              # Part 2: live runbook with PONTO DE FALA (pt-BR)
+│   └── architecture-decisions.md       # ADRs with rejected alternatives
+├── assets/demo-style.css               # Demo HTML stylesheet
+├── CHANGELOG.md
+└── README.md
 ```
+
+## Cost
+
+Estimativa (conta DevOps, sa-east-1), assumindo a infra de lab já provisionada:
+
+| Recurso | Custo aproximado |
+|---------|------------------|
+| Cloud nodes EC2 (m6i.xlarge x2, orchestration) | ~US$ 0.20/h cada = ~US$ 9.6/dia |
+| Gateway nodes (t3.large x2) | ~US$ 0.09/h cada = ~US$ 4.3/dia |
+| ALB | ~US$ 0.025/h + LCU = ~US$ 0.7/dia |
+| Site-to-Site VPN | ~US$ 0.05/h = ~US$ 1.2/dia |
+| Transit Gateway (attachment) | ~US$ 0.05/h = ~US$ 1.2/dia |
+| FIS | por experimento (centavos), CloudWatch logs desprezível |
+| **Total (lab ligado)** | **~US$ 17/dia** |
+
+Hybrid nodes rodam no vSphere on-prem (custo próprio, fora da AWS). Desligar os
+cloud/gateway nodes entre demos reduz a maior parte. `99-cleanup.sh` remove os
+workloads; a infra de lab permanece protegida por `auto-delete=no`.
+
+
