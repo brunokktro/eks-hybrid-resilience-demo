@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>EKS Hybrid Nodes - Resiliência</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/monokai-sublime.min.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--sidebar-w:280px;--topbar-h:56px;--font-body:'Amazon Ember','Helvetica Neue',Roboto,Arial,sans-serif;--aws-orange:#FF9900;--aws-squid:#232F3E;--text:#16191f;--text-secondary:#545b64;--border:#d5dbdb;--bg-page:#fafafa;--bg-content:#fff;--link:#0073bb;--info-bg:#f2f8fd;--info-border:#0073bb;--warn-bg:#fef8f0;--warn-border:#ff9900;--success-bg:#f2f8f0;--success-border:#1d8102}
+body{font-family:var(--font-body);color:var(--text);background:var(--bg-page);line-height:1.6;font-size:15px}
+a{color:var(--link);text-decoration:none}
+a:hover{text-decoration:underline}
+.topbar{position:fixed;top:0;left:0;right:0;height:var(--topbar-h);background:var(--aws-squid);display:flex;align-items:center;padding:0 24px;z-index:100}
+.topbar-title{color:#fff;font-size:1rem;font-weight:600}
+.topbar-title span{color:var(--aws-orange);margin-right:8px}
+.sidebar{position:fixed;top:var(--topbar-h);left:0;width:var(--sidebar-w);height:calc(100vh - var(--topbar-h));overflow-y:auto;background:#fff;border-right:1px solid var(--border);padding:20px 0}
+.sidebar-section{padding:8px 20px;font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-secondary)}
+.sidebar a{display:block;padding:8px 20px 8px 28px;font-size:.88rem;color:var(--text);border-left:3px solid transparent;transition:all .15s}
+.sidebar a:hover{background:var(--info-bg);text-decoration:none}
+.sidebar a.active{border-left-color:var(--aws-orange);background:var(--info-bg);font-weight:600;color:var(--link)}
+.content{margin-left:var(--sidebar-w);margin-top:var(--topbar-h);padding:40px 48px;max-width:820px}
+.content h1{font-size:1.8rem;font-weight:700;margin-bottom:8px;color:var(--text)}
+.content h2{font-size:1.3rem;margin:2rem 0 .8rem;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.content h3{font-size:1.05rem;margin:1.5rem 0 .5rem;color:var(--text)}
+.content p{margin:.6rem 0}
+.content ul,.content ol{padding-left:1.5rem;margin:.5rem 0}
+.content li{margin:4px 0}
+.content table{width:100%;border-collapse:collapse;margin:1rem 0;font-size:.9rem}
+.content th,.content td{padding:10px 14px;border:1px solid var(--border);text-align:left}
+.content th{background:var(--bg-page);font-weight:600}
+.callout{padding:16px 20px;margin:1.2rem 0;border-radius:4px;border-left:4px solid;font-size:.92rem}
+.callout-info{background:var(--info-bg);border-color:var(--info-border)}
+.callout-warn{background:var(--warn-bg);border-color:var(--warn-border)}
+.callout-success{background:var(--success-bg);border-color:var(--success-border)}
+.callout strong{display:block;margin-bottom:4px;font-size:.82rem;text-transform:uppercase;letter-spacing:.3px}
+pre{position:relative;margin:1rem 0;border-radius:6px;background:#1e1e1e;overflow:hidden;border:1px solid #333;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+pre code{display:block;padding:18px 20px;overflow-x:auto;font-size:.85rem;font-family:'Cascadia Code','Fira Code','JetBrains Mono',Consolas,monospace;line-height:1.7;color:#e8d5a3;background:transparent}
+.copy-btn{position:absolute;top:8px;right:10px;padding:3px 10px;border:1px solid #444;border-radius:4px;background:#2a2a2a;font-size:.7rem;cursor:pointer;color:#888;z-index:10}
+.copy-btn:hover{background:#333;color:#e8d5a3}
+code{background:#2a2a2a;color:#e8d5a3;padding:2px 6px;border-radius:4px;font-size:.85em;font-family:'Cascadia Code','Fira Code',Consolas,monospace}
+.expected{background:#f6f8fa;border-left:3px solid var(--success-border);padding:10px 16px;margin:.5rem 0;font-size:.88rem;border-radius:0 4px 4px 0}
+.expected::before{content:"Resultado esperado: ";font-weight:600;color:var(--success-border)}
+.nav-buttons{display:flex;justify-content:space-between;margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--border)}
+.nav-btn{padding:10px 20px;border:1px solid var(--border);border-radius:4px;font-size:.88rem;color:var(--text);background:#fff}
+.nav-btn:hover{background:var(--bg-page);text-decoration:none}
+.nav-btn-next{background:var(--link);color:#fff;border-color:var(--link)}
+.nav-btn-next:hover{background:#005b99;text-decoration:none}
+.duration{display:inline-block;background:var(--bg-page);border:1px solid var(--border);border-radius:12px;padding:2px 10px;font-size:.78rem;color:var(--text-secondary);margin-left:8px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-title"><span>&#9656;</span> EKS Hybrid Nodes - Resiliencia (Stone)</div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-section">Visao Geral</div>
+  <a href="#intro" class="active">Introducao</a>
+  <a href="#arquitetura">Arquitetura</a>
+  <div class="sidebar-section">Demonstracao</div>
+  <a href="#fase1">1. Estado Atual</a>
+  <a href="#fase2">2. Testes de LB</a>
+  <a href="#fase3">3. Desconexao (data path)</a>
+  <a href="#fase3b">3b. NotReady + Tolerations</a>
+  <a href="#fase3c">3c. Pod crash / image cache</a>
+  <a href="#fase4">4. Provisioning na desconexao</a>
+  <a href="#fase5">5. Recovery</a>
+  <a href="#fase6">6. Cloud Bursting</a>
+  <div class="sidebar-section">Apoio</div>
+  <a href="#faq">Perguntas do cliente</a>
+  <a href="#cleanup">Cleanup</a>
+</nav>
+
+<main class="content">
+
+<section id="intro">
+<h1>Introducao</h1>
+<p>Demonstracao de resiliencia de workloads em <strong>EKS Hybrid Nodes</strong> durante cenarios de desconexao de rede entre a AWS e o datacenter on-premises. Prova o requisito central da Stone para a plataforma Caravela: <strong>se a AWS cair, o datacenter nao pode parar</strong>.</p>
+
+<div class="callout callout-info"><strong>Cenario</strong>A Stone vai levar a Caravela (IDP baseado em Kubernetes) para os datacenters de Chicago e Atlanta. O control plane do EKS roda na regiao AWS; apenas os nodes rodam on-premises. A pergunta que esta demo responde: o que acontece com os workloads on-prem quando a conectividade com a AWS e perdida?</div>
+
+<h2>O que voce vai ver</h2>
+<ul>
+<li>Workloads on-prem continuam servindo durante a desconexao (tolerations)</li>
+<li>Comunicacao entre nodes on-prem intacta, so o cross-cluster cai</li>
+<li>Node NotReady sem afetar a LAN local (bloqueio cirurgico do control plane)</li>
+<li>Load balancer local (MetalLB) independente da AWS, analogo ao F5 do design deles</li>
+<li>Limitacoes transparentes (provisioning na desconexao, restart de node) e mitigacoes</li>
+<li>Cloud bursting: baseline no DC, transborda para a AWS sob carga</li>
+</ul>
+
+<h2>Componentes</h2>
+<table>
+<tr><th>Componente</th><th>Papel</th></tr>
+<tr><td>Amazon EKS (control plane)</td><td>Gerenciado na regiao sa-east-1</td></tr>
+<tr><td>Hybrid Nodes (2x, vSphere on-prem)</td><td>Nodes rodando no datacenter</td></tr>
+<tr><td>Cilium (VXLAN)</td><td>CNI - overlay pod-to-pod on-prem e cross-cluster</td></tr>
+<tr><td>Hybrid Node Gateway</td><td>Tunel VXLAN entre regiao e on-prem</td></tr>
+<tr><td>AWS FIS</td><td>Injecao de falha de rede controlada e auditavel</td></tr>
+<tr><td>MetalLB (L2)</td><td>Load balancer on-prem (VIP local, analogo ao F5)</td></tr>
+</table>
+</section>
+
+<section id="arquitetura">
+<h2>Arquitetura</h2>
+<p>A chave: o <strong>control plane</strong> vive na AWS; os <strong>nodes e workloads</strong> vivem no datacenter. Durante uma desconexao, os workloads locais continuam operando - so as acoes que precisam do control plane (novo scheduling) ficam indisponiveis.</p>
+
+<div class="callout callout-info"><strong>Tres caminhos de comunicacao</strong>LOCAL (pod-to-pod no mesmo node), CROSS-NODE (Node 1 para Node 2, ambos on-prem via VXLAN) e CROSS-CLUSTER (cloud para on-prem, atravessa a VPN). Durante a desconexao, LOCAL e CROSS-NODE continuam; CROSS-CLUSTER cai - e isso e aceitavel, porque o DC e autonomo.</div>
+
+<table>
+<tr><th>Camada</th><th>Conteudo</th><th>Ciclo de vida</th></tr>
+<tr><td><strong>Infra de lab</strong></td><td>Cluster EKS, VPC, TGW + VPN, hybrid nodes (vSphere)</td><td>Permanente</td></tr>
+<tr><td><strong>Infra de demo</strong></td><td>FIS role, prefix list, experiment template</td><td>terraform apply/destroy</td></tr>
+<tr><td><strong>Workloads</strong></td><td>servers, clients, ALB, MetalLB, static pod, burst-app</td><td>kubectl / cleanup</td></tr>
+</table>
+</section>
+
+<section id="fase1">
+<h1>Fase 1: Estado Atual <span class="duration">5 min</span></h1>
+<p>Mostrar o cluster: os nodes, os pods dos dois lados, e as tolerations que sustentam a resiliencia.</p>
+
+<h3>Nodes do cluster</h3>
+<p>Destaque o hybrid node: hostname <code>mi-xxxx</code>, OS Ubuntu, IP on-prem (192.168.3.x).</p>
+<pre><code class="language-bash">kubectl get nodes -o wide</code></pre>
+
+<h3>Pods dos dois lados</h3>
+<pre><code class="language-bash">kubectl get pods -n demo-stone -o wide</code></pre>
+
+<h3>Tolerations que mantem os pods vivos</h3>
+<pre><code class="language-bash">kubectl get deploy server-hybrid-1 -n demo-stone \
+  -o jsonpath='{.spec.template.spec.tolerations}' | jq '.'</code></pre>
+<div class="callout callout-info"><strong>Explicacao</strong>Sem tolerations, o Kubernetes faz eviction dos pods em 300s (5min) quando o node fica unreachable. Com elas, os pods sobrevivem pelo tempo configurado, ou indefinidamente. E o que garante que o DC continue operando.</div>
+</section>
+
+<section id="fase2">
+<h1>Fase 2: Testes de Load Balancer <span class="duration">10 min</span></h1>
+
+<h3>2a. Regiao para Hybrid Nodes (Ingress via ALB)</h3>
+<pre><code class="language-bash">ALB=$(kubectl get ingress demo-ingress -n demo-stone \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+curl -s "http://${ALB}/" | jq '{hostname, message}'</code></pre>
+<div class="expected">O request chega ao pod on-prem. Fluxo: internet, ALB (regiao), Gateway, VXLAN, pod on-prem.</div>
+
+<h3>2b. Hybrid Nodes para Externo (Egress)</h3>
+<pre><code class="language-bash">kubectl exec -n demo-stone deploy/server-hybrid-1 -- curl -s httpbin.org/ip</code></pre>
+
+<h3>2c. Load Balancer On-Premises (MetalLB VIP)</h3>
+<p>O VIP local (192.168.3.240) e o papel que o F5 exerce no design de producao da Stone.</p>
+<pre><code class="language-bash"># Da LAN on-prem (ou do proprio node):
+curl -s http://192.168.3.240/ | jq '{hostname, message}'</code></pre>
+<div class="expected">HTTP 200 - a entrada local nao depende da AWS.</div>
+</section>
+
+<section id="fase3">
+<h1>Fase 3: Desconexao em Estado Estavel <span class="duration">10 min</span></h1>
+<p><strong>Nucleo da demo.</strong> Abra tres terminais lado a lado com os logs dos clients.</p>
+<pre><code class="language-bash"># Terminal 1 - LOCAL (Node1 para Node1)
+kubectl logs -n demo-stone deploy/client-hybrid -f
+# Terminal 2 - CROSS-NODE (Node1 para Node2)
+kubectl logs -n demo-stone deploy/client-hybrid-to-hybrid -f
+# Terminal 3 - CROSS-CLUSTER (Cloud para Node1)
+kubectl logs -n demo-stone deploy/client-cloud-to-hybrid -f</code></pre>
+<div class="callout callout-warn"><strong>Logs do hybrid node</strong>kubectl logs em pods do hybrid node pode falhar (control plane alcanca o kubelet:10250 so pela VPN). Alternativa: SSH no node, ou focar no client-cloud (kubelet cloud sempre acessivel).</div>
+
+<h3>Injetar a falha via FIS</h3>
+<pre><code class="language-bash">aws fis start-experiment \
+  --experiment-template-id ${FIS_TEMPLATE_ID} \
+  --region sa-east-1</code></pre>
+<div class="expected">Apos ~40s: CROSS-CLUSTER passa a TIMEOUT, enquanto LOCAL e CROSS-NODE seguem em 200.</div>
+<div class="callout callout-info"><strong>Explicacao</strong>O datacenter continua operando de forma independente, incluindo a comunicacao entre nodes on-prem. So o link cross-cluster e afetado. E exatamente o requisito do Rogerio: se a AWS cair, o DC nao para.</div>
+<div class="callout callout-warn"><strong>Endpoint publico vs privado</strong>Neste lab o kubelet usa o endpoint publico do EKS (via internet), entao o FIS derruba so o data path - o node permanece Ready. Em producao com endpoint privado + Direct Connect, o FIS derruba os dois caminhos.</div>
+</section>
+
+<section id="fase3b">
+<h1>Fase 3b: NotReady + Tolerations <span class="duration">5 min</span></h1>
+<p>Para demonstrar o node NotReady <strong>sem afetar a LAN local</strong> (nao desconecte a NIC - isso mataria os paths locais e nao reflete o cenario real), bloqueie apenas o acesso do kubelet ao endpoint do EKS.</p>
+
+<h3>Resolver os IPs do endpoint (mudam - sempre re-resolver)</h3>
+<pre><code class="language-bash">dig +short $(aws eks describe-cluster --name llm-vmware-hybrid \
+  --region sa-east-1 --query 'cluster.endpoint' --output text | sed 's|https://||')</code></pre>
+
+<h3>Bloquear no node (via SSH)</h3>
+<pre><code class="language-bash">sudo iptables -I OUTPUT -d <IP1> -j DROP
+sudo iptables -I OUTPUT -d <IP2> -j DROP</code></pre>
+<div class="expected">Node NotReady em ~60s, taint unreachable:NoExecute aplicado, pods continuam Running (tolerations), LAN local segue em 200 (LOCAL, CROSS-NODE, VIP).</div>
+
+<h3>Reverter</h3>
+<pre><code class="language-bash">sudo iptables -D OUTPUT -d <IP1> -j DROP
+sudo iptables -D OUTPUT -d <IP2> -j DROP</code></pre>
+<div class="expected">Node volta a Ready em ~15-20s.</div>
+<div class="callout callout-info"><strong>Explicacao</strong>Bloqueamos apenas o caminho node para control plane - exatamente o que acontece quando o link com a AWS cai. O cluster ve o node como perdido, mas o datacenter continua 100% operacional.</div>
+</section>
+
+<section id="fase3c">
+<h1>Fase 3c: Pod Crash e Image Cache <span class="duration">5 min</span></h1>
+<p>Ponto basico e critico: um pod que crasha durante a desconexao <strong>reinicia</strong>? Sim - o kubelet gerencia restartPolicy localmente, sem API server, desde que a imagem esteja no cache local do containerd.</p>
+
+<h3>Matar o container durante a desconexao</h3>
+<pre><code class="language-bash"># Via SSH no node
+sudo pkill -f podinfo && echo "container morto"</code></pre>
+
+<h3>Ver o restart local</h3>
+<pre><code class="language-bash">curl -s -o /dev/null -w "app de volta: HTTP %{http_code}\n" \
+  --max-time 5 http://192.168.3.240/healthz</code></pre>
+<div class="expected">HTTP 200 - o kubelet reinicia o container com a imagem do cache, sem falar com a AWS.</div>
+<div class="callout callout-warn"><strong>Requisito de producao</strong>Duas configuracoes sao obrigatorias: pre-pull das imagens criticas em todos os nodes, e GC do containerd configurado para nao descartar imagens (discard_unpacked_layers=false). Sem isso, um crash durante desconexao vira indisponibilidade.</div>
+</section>
+
+<section id="fase4">
+<h1>Fase 4: Desconexao Durante Provisioning <span class="duration">10 min</span></h1>
+<p>Ainda desconectado, tentar escalar a app.</p>
+<pre><code class="language-bash">kubectl scale deploy server-hybrid-1 -n demo-stone --replicas=4
+sleep 15
+kubectl get pods -n demo-stone -l location=hybrid -o wide</code></pre>
+<div class="expected">Os pods existentes continuam Running. Os novos ficam Pending - o scheduler nao alcanca o node.</div>
+<div class="callout callout-warn"><strong>Limitacao conhecida</strong>Durante a desconexao, acoes do control plane (novo scheduling, HPA, rollout) ficam indisponiveis. MAS os pods existentes continuam processando. Mitigacao: dimensionar as replicas iniciais para a carga esperada (N+1 ou N+2).</div>
+</section>
+
+<section id="fase5">
+<h1>Fase 5: Recovery <span class="duration">5 min</span></h1>
+<pre><code class="language-bash">aws fis stop-experiment --id <EXPERIMENT_ID> --region sa-east-1</code></pre>
+<div class="expected">O client-cloud-to-hybrid volta a 200 sozinho (auto-heal), o node volta Ready, os pods Pending sao agendados. Zero intervencao manual.</div>
+<pre><code class="language-bash">kubectl scale deploy server-hybrid-1 -n demo-stone --replicas=2</code></pre>
+</section>
+
+<section id="fase6">
+<h1>Fase 6: Cloud Bursting <span class="duration">10 min</span></h1>
+<p>Cenario de elasticidade (nao resiliencia): a app roda no datacenter e, sob pico, transborda para a AWS.</p>
+<div class="callout callout-info"><strong>Complementar</strong>Bursting DEPENDE da conectividade com a AWS (oposto da resiliencia). Um usa a nuvem quando ela esta la; o outro sobrevive quando ela nao esta.</div>
+
+<h3>Estado normal (roda no DC)</h3>
+<pre><code class="language-bash">kubectl apply -f manifests/08-cloud-bursting.yaml
+kubectl get pods -n demo-stone -l app=burst-app -o wide</code></pre>
+
+<h3>Pico de carga: burst para a AWS</h3>
+<pre><code class="language-bash">kubectl scale deploy burst-app -n demo-stone --replicas=12
+sleep 30
+kubectl get pods -n demo-stone -l app=burst-app -o wide \
+  --no-headers | awk '{print $7}' | sort | uniq -c</code></pre>
+<div class="expected">~7 pods no DC (hybrid), ~3 transbordam para os cloud nodes. Overflow automatico via nodeAffinity preferred.</div>
+<div class="callout callout-info"><strong>Explicacao</strong>A plataforma serve a carga normal no datacenter, com o custo e a latencia do hardware que ja existe. No pico, a capacidade transborda para a AWS automaticamente, sem reconfigurar nada.</div>
+
+<h3>Fim do pico: consolidar no DC</h3>
+<pre><code class="language-bash">kubectl scale deploy burst-app -n demo-stone --replicas=2
+kubectl rollout restart deploy/burst-app -n demo-stone</code></pre>
+<div class="callout callout-warn"><strong>Nuance</strong>O scale-down remove pods mas nao move os sobreviventes de volta (affinity so age no scheduling). Para consolidar ativamente use rollout restart ou o Descheduler em producao.</div>
+</section>
+
+<section id="faq">
+<h1>Perguntas Provaveis do Cliente</h1>
+<table>
+<tr><th>Pergunta</th><th>Resposta curta</th></tr>
+<tr><td>Storage stateful?</td><td>Funciona via hostPath, local PV ou CSI de terceiros (Longhorn/Ceph/array do DC). So EBS nao (preso a AZ).</td></tr>
+<tr><td>Observabilidade na desconexao?</td><td>Backend local (Prometheus + ADOT dual-exporter) + crictl. Alarme NodeNotReady no CloudWatch.</td></tr>
+<tr><td>Pod crash reinicia?</td><td>Sim, se a imagem estiver no cache local (Fase 3c).</td></tr>
+<tr><td>Desconexao maior que 12h?</td><td>Pods nao param. Credencial: SSM 1h, IAM Roles Anywhere ate 12h. Usar IRA com durationSeconds alto.</td></tr>
+<tr><td>Admission webhooks?</td><td>Gotcha: failurePolicy Fail bloqueia o cluster inteiro se o webhook backend estiver no on-prem. Usar Ignore ou replicas nos dois lados.</td></tr>
+<tr><td>Chicago e Atlanta?</td><td>Um cluster por DC. Se unico, zone labels obrigatorias (cancela evictions na zona inteira).</td></tr>
+</table>
+</section>
+
+<section id="cleanup">
+<h1>Cleanup</h1>
+<pre><code class="language-bash">./scripts/99-cleanup.sh          # remove workloads, deixa lab pronto p/ proxima demo
+./scripts/validate-spring-clean.sh  # confirma zero orfaos sem tag auto-delete=no</code></pre>
+<div class="nav-buttons">
+  <a class="nav-btn" href="#intro">&larr; Inicio</a>
+  <a class="nav-btn nav-btn-next" href="#">Encerrar</a>
+</div>
+</section>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+hljs.highlightAll();
+document.querySelectorAll('pre').forEach(function(pre){
+  var btn=document.createElement('button');
+  btn.className='copy-btn';btn.textContent='Copy';
+  btn.onclick=function(){
+    navigator.clipboard.writeText(pre.querySelector('code').textContent);
+    btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy'},1500);
+  };
+  pre.appendChild(btn);
+});
+var sections=document.querySelectorAll('section[id]');
+var links=document.querySelectorAll('.sidebar a');
+window.addEventListener('scroll',function(){
+  var top=window.scrollY+80;
+  sections.forEach(function(s){
+    if(s.offsetTop<=top&&s.offsetTop+s.offsetHeight>top){
+      links.forEach(function(l){l.classList.remove('active')});
+      var a=document.querySelector('.sidebar a[href="#'+s.id+'"]');
+      if(a)a.classList.add('active');
+    }
+  });
+});
+</script>
+</body>
+</html>
