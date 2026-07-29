@@ -326,7 +326,7 @@ Para janelas longas: IRA com durationSeconds alto.
 desconecta, o API server não o alcança. Com `failurePolicy: Fail`, isso BLOQUEIA
 operações no cluster INTEIRO (não só on-prem). Recomendações: webhooks críticos
 em nodes cloud, ou `failurePolicy: Ignore` + réplicas nos dois lados. Revisar os
-webhooks do Caravela (Kyverno/OPA/etc) nesse critério.
+webhooks do Karavela (Kyverno/OPA/etc) nesse critério.
 
 ### 6. "E o cloud bursting que discutimos na reunião?"
 Estratégia validada em outro lab (Karpenter + Spot quando o hardware local
