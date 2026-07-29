@@ -7,7 +7,7 @@ Este documento cobre TODA a preparação do ambiente, feita **antes** da call co
 o cliente. Ao final, o ambiente estará validado e pronto para a demo ao vivo
 (que está na Parte 2 - Demo Runbook).
 
-::alert[Nada aqui é apresentado ao cliente. É o trabalho de bastidor. A demo ao vivo começa na Parte 2.]{type="info"}
+> Nada aqui é apresentado ao cliente. É o trabalho de bastidor. A demo ao vivo começa na Parte 2.
 
 ## Visão geral da demo
 
@@ -97,16 +97,16 @@ Preencha com os valores do SEU ambiente on-premises: LAN dos hybrid nodes
 
 Configurar o kubectl:
 
-:::code{showCopyAction=true showLineNumbers=false language=bash}
+```bash
 aws eks update-kubeconfig --name llm-vmware-hybrid --region sa-east-1
-:::
+```
 
 ## Setup - Passo 1: Validar pré-requisitos
 
-:::code{showCopyAction=true showLineNumbers=false language=bash}
+```bash
 chmod +x scripts/00-prerequisites.sh
 ./scripts/00-prerequisites.sh
-:::
+```
 
 O script valida: kubectl, node hybrid Ready, Hybrid Node Gateway, AWS LB
 Controller, Cilium, VPN (com detecção automática de IP público divergente).
@@ -115,14 +115,14 @@ Controller, Cilium, VPN (com detecção automática de IP público divergente).
 
 Os manifests usam `nodeSelector: hybrid-node-id`. Rotular ANTES de fazer deploy:
 
-:::code{showCopyAction=true showLineNumbers=false language=bash}
+```bash
 kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
 kubectl label node <NODE_1> hybrid-node-id=node1
-:::
+```
 
 ## Setup - Passo 3: Provisionar a infra do FIS (Terraform)
 
-:::code{showCopyAction=true showLineNumbers=false language=bash}
+```bash
 cd terraform/
 terraform init
 terraform apply \
@@ -130,25 +130,25 @@ terraform apply \
   -var="region=sa-east-1" \
   -var="onprem_node_cidr=192.168.3.0/24" \
   -var="remote_pod_cidr=10.201.0.0/16"
-:::
+```
 
 Anote o output `fis_experiment_template_id` - será usado nos cenários de falha.
 
 ## Setup - Passo 4: Deploy dos servers e clients
 
-:::code{showCopyAction=true showLineNumbers=false language=bash}
+```bash
 kubectl apply -f manifests/01-server-hybrid-1.yaml   # server on-prem Node 1
 kubectl apply -f manifests/03-server-cloud.yaml      # server cloud
 kubectl apply -f manifests/04-clients.yaml           # 3 clients
 kubectl get pods -n demo-stone -o wide
-:::
+```
 
 ## Setup - Passo 5: MetalLB (LB on-premises)
 
 MetalLB em modo L2 é o padrão validado pela AWS para estabilidade durante
 desconexões. Fornece o VIP local (papel análogo ao F5 no design de produção).
 
-:::code{showCopyAction=true showLineNumbers=false language=bash}
+```bash
 helm repo add metallb https://metallb.github.io/metallb
 helm repo update
 helm install metallb metallb/metallb \
@@ -159,30 +159,30 @@ helm install metallb metallb/metallb \
 
 kubectl apply -f manifests/06-metallb-onprem-lb.yaml
 kubectl get svc server-hybrid-lb -n demo-stone
-:::
+```
 
 ## Setup - Passo 6: ALB Ingress
 
-:::code{showCopyAction=true showLineNumbers=false language=bash}
+```bash
 kubectl apply -f manifests/05-ingress-alb.yaml
 kubectl wait --for=jsonpath='{.status.loadBalancer.ingress[0].hostname}' \
   ingress/demo-ingress -n demo-stone --timeout=180s
-:::
+```
 
-::alert[O ALB com target-type ip precisa que o security group do cluster/nodes permita o SG do ALB na porta 9898, e que as subnets do ALB tenham rota para o pod CIDR (10.201.0.0/16). Ver troubleshooting em environment-status.]{type="warning"}
+> O ALB com target-type ip precisa que o security group do cluster/nodes permita o SG do ALB na porta 9898, e que as subnets do ALB tenham rota para o pod CIDR (10.201.0.0/16). Ver troubleshooting em environment-status.
 
 ## Setup - Passo 7: Validar tudo (dry-run)
 
 Antes da call, rode o validador para confirmar que cada cenário funciona
 end-to-end, e depois o RESET para deixar o ambiente no baseline limpo:
 
-:::code{showCopyAction=true showLineNumbers=false language=bash}
+```bash
 export FIS_TEMPLATE_ID=<id do terraform output>
 chmod +x scripts/validate-demo.sh
 ./scripts/validate-demo.sh        # menu interativo - opção A roda tudo + reset
-:::
+```
 
-::alert[O validate-demo.sh NÃO é usado na demo ao vivo. Ele só valida o ambiente. A demo é apresentada passo a passo pela Parte 2 (Demo Runbook), você mostrando cada comando. O validador só faz operações reversíveis e a opção RESET garante baseline limpo.]{type="info"}
+> O validate-demo.sh NÃO é usado na demo ao vivo. Ele só valida o ambiente. A demo é apresentada passo a passo pela Parte 2 (Demo Runbook), você mostrando cada comando. O validador só faz operações reversíveis e a opção RESET garante baseline limpo.
 
 ## Nota: segundo Hybrid Node
 
