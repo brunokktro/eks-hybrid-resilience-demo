@@ -192,6 +192,8 @@ Terminal 3 (CROSS-CLUSTER): 200 ✓  TIMEOUT ✗  TIMEOUT ✗  <- esperado (link
 
 > O datacenter continua operando de forma independente, incluindo comunicação ENTRE nodes on-prem. Só o link cross-cluster é afetado - e isso é aceitável, porque o DC é autônomo. É exatamente o requisito do Rogério: se a AWS cair, o DC não para.
 
+> Dica k9s (o "money shot"): em `:pods` filtrado em `demo-stone`, os pods no hybrid node permanecem Running (verdes) durante a desconexão - sem eviction. Alterne para `:nodes` e, na Fase 3b, o hybrid node vira NotReady ao vivo enquanto os pods seguem verdes. O contraste visual vale mais que mil palavras.
+
 ## Fase 3-cache: Pod crash durante a desconexão - image cache (5 min)
 
 **Ponto BÁSICO e crítico:** um pod que crasha durante a desconexão REINICIA?
@@ -322,6 +324,8 @@ os cloud nodes da AWS. O overflow é automático - `preferred` affinity, não
 `required`: o scheduler prefere on-prem, mas usa a nuvem quando o DC enche.
 
 > Sua plataforma serve a carga normal no datacenter, com o custo e a latência do hardware que vocês já têm. Quando chega um pico - Black Friday, campanha - a capacidade transborda para a AWS automaticamente, sem reconfigurar nada. É elasticidade sob demanda mantendo o baseline no DC.
+
+> Dica k9s: em `:pods` filtrado em `demo-stone`, pressione `w` para exibir a coluna NODE. Ao escalar o burst-app, veja os pods nascendo e se espalhando: a maioria nos hybrid nodes e o excedente nos cloud nodes. Bursting visível pod a pod.
 
 ### Fim do pico: consolidação de volta ao DC
 
