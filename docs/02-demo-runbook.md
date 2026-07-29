@@ -44,6 +44,11 @@ Confirmar o contexto atual antes de seguir:
 kubectl config current-context
 ```
 
+> Ferramentas recomendadas: `kubectl`, `jq`, `k9s` (painel visual) e `kube-ps1`
+> no prompt (mostra o contexto atual, evita rodar no cluster errado). Layout:
+> HTML do runbook na esquerda, iTerm2 na direita; na Fase 3, divida o terminal
+> em 3 panes para os 3 clients lado a lado.
+
 ## Fase 1: Estado atual (5 min)
 
 **O que mostrar ao cliente:**
@@ -89,6 +94,8 @@ kubectl get deploy server-hybrid-1 -n demo-stone \
 ```
 
 > Sem tolerations, o Kubernetes faz eviction dos pods em 300s (5min) quando o node fica unreachable. Com elas, os pods sobrevivem pelo tempo configurado - ou indefinidamente.
+
+> Dica k9s: deixe um `k9s` aberto num pane ao lado durante toda a demo. Abra com `k9s`, confirme o cluster com `:ctx`, veja `:nodes` e `:pods` (digite `demo-stone` para filtrar). Nesta fase ele já dá o panorama dos dois lados.
 
 ## Fase 2: Testes de LB - happy path (10 min)
 

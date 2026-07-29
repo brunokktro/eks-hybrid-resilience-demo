@@ -136,6 +136,7 @@ code{background:#2a2a2a;color:#e8d5a3;padding:2px 6px;border-radius:4px;font-siz
 <h3>Confirmar que está no cluster certo</h3>
 <pre><code class="language-bash">kubectl config current-context</code></pre>
 <div class="expected">O ARN do cluster llm-vmware-hybrid. A partir daqui, todos os comandos da demo vão para o cluster correto.</div>
+<div class="callout callout-info"><strong>Ferramentas recomendadas</strong>Deixe instalados: <code>kubectl</code>, <code>jq</code>, <code>k9s</code> (painel visual) e o <code>kube-ps1</code> no prompt (mostra o contexto atual - evita rodar no cluster errado). Layout sugerido: HTML deste runbook na metade esquerda da tela, terminal (iTerm2) na direita; na Fase 3, divida o terminal em 3 panes para os 3 clients lado a lado.</div>
 </section>
 
 <section id="fase1">
@@ -172,6 +173,8 @@ code{background:#2a2a2a;color:#e8d5a3;padding:2px 6px;border-radius:4px;font-siz
 <pre><code class="language-bash">kubectl get deploy server-hybrid-1 -n demo-stone \
   -o jsonpath='{.spec.template.spec.tolerations}' | jq '.'</code></pre>
 <div class="callout callout-info"><strong>Explicação</strong>Sem tolerations, o Kubernetes faz eviction dos pods em 300s (5min) quando o node fica unreachable. Com elas, os pods sobrevivem pelo tempo configurado, ou indefinidamente. É o que garante que o DC continue operando.</div>
+
+<div class="callout callout-success"><strong>Dica k9s - painel visual ao vivo</strong>Deixe um <code>k9s</code> aberto num pane ao lado durante toda a demo - o cliente acompanha o estado mudando em tempo real, sem precisar reexecutar comandos. Abra com <code>k9s</code>, confirme o cluster com <code>:ctx</code>, veja os nodes com <code>:nodes</code> e os pods da demo com <code>:pods</code> (digite <code>demo-stone</code> para filtrar o namespace). Nesta Fase 1 ele já dá o panorama: hybrid nodes e cloud nodes, pods dos dois lados.</div>
 </section>
 
 <section id="fase2">
@@ -211,6 +214,8 @@ kubectl logs -n demo-stone deploy/client-cloud-to-hybrid -f</code></pre>
 <div class="expected">Após ~40s: CROSS-CLUSTER passa a TIMEOUT, enquanto LOCAL e CROSS-NODE seguem em 200.</div>
 <div class="callout callout-info"><strong>Explicação</strong>O datacenter continua operando de forma independente, incluindo a comunicação entre nodes on-prem. Só o link cross-cluster é afetado. É exatamente o requisito do Rogério: se a AWS cair, o DC não para.</div>
 <div class="callout callout-warn"><strong>Endpoint público vs privado</strong>Neste lab o kubelet usa o endpoint público do EKS (via internet), então o FIS derruba só o data path - o node permanece Ready. Em produção com endpoint privado + Direct Connect, o FIS derruba os dois caminhos.</div>
+
+<div class="callout callout-success"><strong>Dica k9s - o "money shot"</strong>Este é o melhor momento para o k9s. Abra <code>:pods</code> filtrado em <code>demo-stone</code>: durante a desconexão, os pods no hybrid node permanecem <strong>Running</strong> (verdes) - o cliente vê que NÃO houve eviction. Alterne para <code>:nodes</code> e, na Fase 3b, o hybrid node muda para <strong>NotReady</strong> ao vivo enquanto os pods continuam verdes. O contraste visual (node caído, pods vivos) vale mais que mil palavras.</div>
 </section>
 
 <section id="fase3b">
@@ -281,6 +286,8 @@ kubectl get pods -n demo-stone -l app=burst-app -o wide \
   --no-headers | awk '{print $7}' | sort | uniq -c</code></pre>
 <div class="expected">~7 pods no DC (hybrid), ~3 transbordam para os cloud nodes. Overflow automático via nodeAffinity preferred.</div>
 <div class="callout callout-info"><strong>Explicação</strong>A plataforma serve a carga normal no datacenter, com o custo e a latência do hardware que já existe. No pico, a capacidade transborda para a AWS automaticamente, sem reconfigurar nada.</div>
+
+<div class="callout callout-success"><strong>Dica k9s - ver o overflow acontecer</strong>Em <code>:pods</code> filtrado em <code>demo-stone</code>, pressione <code>w</code> para exibir a coluna NODE (wide). Ao escalar o burst-app, o cliente vê os novos pods nascendo e se espalhando: a maioria nos hybrid nodes (mi-xxxx) e o excedente nos cloud nodes (ip-10-43-xxx). É o bursting visível pod a pod, em tempo real.</div>
 
 <h3>Fim do pico: consolidar no DC</h3>
 <pre><code class="language-bash">kubectl scale deploy burst-app -n demo-stone --replicas=2
