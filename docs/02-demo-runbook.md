@@ -21,6 +21,10 @@ comando, explicando cada um - não use o validador automatizado aqui.
 | 3c | LB On-Premises (MetalLB VIP) | curl ao VIP | Entrada local independente da AWS |
 | 4 | Restart de node DURANTE desconexão | vCenter restart | Pods não voltam até reconectar; réplicas multi-node salvam |
 
+![Componentes do Kubernetes no pod failover durante desconexões de rede](https://docs.aws.amazon.com/images/eks/latest/best-practices/images/hybrid/k8s-components-pod-failover.png)
+
+*Componentes envolvidos no comportamento de failover de pods durante desconexões (fonte: [EKS Best Practices - Pod Failover](https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-kubernetes-pod-failover.html)).*
+
 ## Fase 0: Preparar o ambiente (2 min)
 
 Antes de tudo, confirmar em qual cluster estamos apontando. Numa rotina de
@@ -43,6 +47,18 @@ Confirmar o contexto atual antes de seguir:
 ```bash
 kubectl config current-context
 ```
+
+### Links e acessos do ambiente (deixe abertos)
+
+| Recurso | Endereço | Uso |
+|---------|----------|-----|
+| App via ALB (região AWS) | `kubectl get ingress demo-ingress -n demo-stone -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'` | Ingress region-originated - cai no disconnect |
+| App via VIP on-prem (MetalLB) | http://192.168.3.240/ | Entrada local - sobrevive ao disconnect |
+| Grafana on-prem | http://192.168.3.242/ | Dashboard de saúde dos nodes + conectividade com a nuvem (anônimo) |
+| SSH Node 1 / Node 2 | `ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51` / `...52` | Comandos no node (crictl, iptables) |
+| Cluster EKS | `aws eks update-kubeconfig --name llm-vmware-hybrid --region sa-east-1` | kubectl |
+
+
 
 > Ferramentas recomendadas: `kubectl`, `jq`, `k9s` (painel visual) e `kube-ps1`
 > no prompt (mostra o contexto atual, evita rodar no cluster errado). Layout:
@@ -428,58 +444,63 @@ O dashboard mostra:
 > DC mantém observabilidade própria mesmo cego para a AWS. Deixe este dashboard
 > aberto desde o início, ao lado das URLs do podinfo.
 
-## Perguntas prováveis do cliente
+## F.A.Q
 
-### 1. "E storage persistente? Nossos workloads stateful?"
-Stateful FUNCIONA em Hybrid Nodes - o que NÃO funciona é EBS (o EBS CSI não
-está na lista de add-ons compatíveis; volume é preso à AZ). Opções locais:
-(1) **hostPath** - simples, preso ao node (é como o sample oficial de GPU
-burst persiste modelos LLM de ~3GB localmente); (2) **local PersistentVolumes**
-com nodeAffinity; (3) **CSI de terceiros** (Longhorn/Ceph/OpenEBS ou o CSI do
-storage array do DC). FSx CSI está na lista, mas é storage de rede dependente
-da região (falha na desconexão). Ação: validar com o time de storage do cliente
-qual CSI o array deles oferece.
-Fonte: docs.aws.amazon.com/eks/latest/userguide/hybrid-nodes-add-ons.html
+### E storage persistente? Nossos workloads stateful?
 
-### 2. "Como fica a observabilidade DURANTE a desconexão? Ficamos cegos?"
-Métricas/logs para CloudWatch/AMP param de fluir durante o disconnect
-(dependência regional). Mitigação (best practices): backend LOCAL secundário
-(Prometheus local + ADOT dual-exporter) e `crictl` para troubleshooting sem
-control plane. Do lado AWS, alarme CloudWatch em NodeNotReady (control plane
-logs) detecta a desconexão.
+Stateful **funciona** em Hybrid Nodes - o que **não** funciona é EBS (preso à AZ, e o EBS CSI não está na lista de add-ons compatíveis). Opções locais:
 
-### 3. "Pod que CRASHA durante a desconexão reinicia?"
-SIM - diferente do restart de NODE (Cenário 4). O kubelet gerencia restartPolicy
-localmente, sem API server, DESDE QUE a imagem esteja no cache do containerd.
-Por isso: pre-pull de imagens críticas + GC do containerd configurado para não
-descartar imagens (`discard_unpacked_layers=false`).
+- **hostPath** - simples, preso ao node (é como o [sample oficial de GPU burst](https://github.com/aws-samples/sample-eks-hybrid-nodes-gpu-burst-scaling) persiste modelos LLM localmente)
+- **local PersistentVolumes** com `nodeAffinity`
+- **CSI de terceiros** - Longhorn, Ceph, OpenEBS, ou o CSI do storage array do próprio DC
+- **FSx CSI** está na lista de compatíveis, mas é storage de rede dependente da região (falha na desconexão)
 
-### 4. "E se a desconexão durar mais de 12 horas?"
-SSM: credencial de 1h, para de renovar desconectado (reconexão pode levar até
-30min de backoff - restart do agent força). IAM Roles Anywhere: até 12h
-configurável, reconexão em segundos. IMPORTANTE: os PODS continuam rodando
-independente de credencial expirada - ela afeta só a comunicação node↔AWS.
-Para janelas longas: IRA com durationSeconds alto.
+**Ação:** validar com o time de storage do cliente qual CSI o array deles oferece. Ref: [add-ons compatíveis](https://docs.aws.amazon.com/eks/latest/userguide/hybrid-nodes-add-ons.html).
 
-### 5. "Nosso IDP usa admission webhooks (policy engines). O que acontece?"
-**Gotcha de produção:** se um webhook backend roda nos hybrid nodes e o DC
-desconecta, o API server não o alcança. Com `failurePolicy: Fail`, isso BLOQUEIA
-operações no cluster INTEIRO (não só on-prem). Recomendações: webhooks críticos
-em nodes cloud, ou `failurePolicy: Ignore` + réplicas nos dois lados. Revisar os
-webhooks da plataforma (Kyverno/OPA/etc) nesse critério.
+### Como fica a observabilidade DURANTE a desconexão? Ficamos cegos?
 
-### 6. "E o cloud bursting que discutimos na reunião?"
-Estratégia validada em outro lab (Karpenter + Spot quando o hardware local
-satura, via KEDA/Prometheus). Não faz parte desta demo de resiliência - pode ser
-uma demo #2. Nota: bursting DEPENDE da conectividade com a região - complementar
-à resiliência, não substituto.
+Métricas/logs para CloudWatch/AMP **param de fluir** durante o disconnect (dependência regional). Mitigações:
 
-### 7. "Chicago e Atlanta: um cluster para os dois DCs?"
-Recomendação: **um cluster por DC** (blast radius, upgrades independentes,
-latência). Se optarem por cluster único com nodes nos dois DCs: zone labels por
-DC são OBRIGATÓRIAS - o Kubernetes cancela evictions quando uma zona INTEIRA
-fica unreachable, protegendo cada DC. Requisito de rede: até 200ms RTT e
-100Mbps+ por DC (docs oficiais).
+- **Backend local** secundário: Prometheus on-prem + ADOT com dual-exporter (é o que a Fase 7 demonstra)
+- **`crictl`** para troubleshooting local sem control plane
+- Do lado AWS: alarme **CloudWatch em NodeNotReady** (control plane logs) detecta a desconexão
+
+Ref: [best practices - network disconnections](https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-network-disconnections.html).
+
+### Pod que CRASHA durante a desconexão reinicia?
+
+**Sim** - diferente do restart de **node** (Cenário 4). O kubelet gerencia o `restartPolicy` localmente, sem API server, **desde que a imagem esteja no cache do containerd**. Pré-requisitos em produção:
+
+- **Pre-pull** das imagens críticas em todos os nodes
+- GC do containerd com `discard_unpacked_layers=false` (não descartar imagens)
+
+### E se a desconexão durar mais de 12 horas?
+
+Os **pods continuam rodando** independente de credencial expirada - ela afeta só a comunicação node↔AWS, não o workload local. Sobre as credenciais:
+
+- **SSM Hybrid Activation:** credencial de 1h; para de renovar offline (reconexão pode levar até 30min de backoff - `systemctl restart` do agent força)
+- **IAM Roles Anywhere:** até 12h configurável, reconexão em segundos
+
+**Para janelas longas:** IRA com `durationSeconds` alto. Ref: [host credentials](https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-host-creds.html).
+
+### Nosso IDP usa admission webhooks (policy engines). O que acontece?
+
+**Gotcha de produção importante:** se um webhook backend roda nos hybrid nodes e o DC desconecta, o API server não o alcança.
+
+- Com `failurePolicy: Fail`, isso **bloqueia operações no cluster INTEIRO** (não só on-prem)
+- **Recomendações:** rodar webhooks críticos em nodes cloud, ou usar `failurePolicy: Ignore` + réplicas nos dois lados
+- **Ação:** revisar os webhooks da plataforma (Kyverno/OPA/Gatekeeper) sob esse critério
+
+### E o cloud bursting?
+
+Demonstrado na **Fase 6** (overflow) e evoluível para **Karpenter + Spot** disparado por KEDA/Prometheus. Nota: bursting **depende** da conectividade com a região - é complementar à resiliência (um usa a nuvem quando ela está lá, o outro sobrevive quando não está).
+
+### Chicago e Atlanta: um cluster para os dois DCs?
+
+**Recomendação: um cluster por DC** (blast radius menor, upgrades independentes, menor latência). Se optarem por cluster único com nodes nos dois DCs:
+
+- **Zone labels obrigatórias** (`topology.kubernetes.io/zone` por DC) - o Kubernetes cancela evictions quando uma zona INTEIRA fica unreachable, protegendo cada DC
+- Requisito de rede: até **200ms RTT** e **100Mbps+** por DC
 
 ## Cleanup
 

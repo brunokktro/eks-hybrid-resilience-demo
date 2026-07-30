@@ -46,6 +46,8 @@ pre code{display:block;padding:18px 20px;overflow-x:auto;font-size:.85rem;font-f
 code{background:#2a2a2a;color:#e8d5a3;padding:2px 6px;border-radius:4px;font-size:.85em;font-family:'Cascadia Code','Fira Code',Consolas,monospace}
 .nav-buttons{display:flex;justify-content:space-between;margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--border)}
 .duration{display:inline-block;background:var(--bg-page);border:1px solid var(--border);border-radius:12px;padding:2px 10px;font-size:.78rem;color:var(--text-secondary);margin-left:8px;font-weight:400}
+.content img{max-width:100%;height:auto;display:block;margin:16px auto;border:1px solid var(--border);border-radius:8px;background:#fff;padding:8px}
+.content em{color:var(--text-secondary);font-size:.88rem}
 
 </style>
 </head>
@@ -65,7 +67,7 @@ code{background:#2a2a2a;color:#e8d5a3;padding:2px 6px;border-radius:4px;font-siz
 <a href="#sec3">Limitações conhecidas</a>
 <a href="#fase6">Fase 6: Cloud Bursting - overflow do DC para a AWS</a>
 <a href="#fase7">Fase 7: Observabilidade on-premises</a>
-<a href="#sec4">Perguntas prováveis do cliente</a>
+<a href="#sec4">F.A.Q</a>
 <a href="#sec5">Cleanup</a>
 </nav>
 <main class="content">
@@ -73,7 +75,9 @@ code{background:#2a2a2a;color:#e8d5a3;padding:2px 6px;border-radius:4px;font-siz
 <p>Este é o roteiro apresentado <strong>ao vivo para o cliente</strong>. Cada fase tem: o que mostrar, o comando, o resultado esperado e o ponto de fala. Apresente comando a comando, explicando cada um - não use o validador automatizado aqui.</p>
 <details class="callout callout-info"><summary>Setup: Pré-requisito: ambiente já preparado e validado pela Parte 1. Tenha o ...</summary><div>Pré-requisito: ambiente já preparado e validado pela Parte 1. Tenha o ALB DNS e o FIS_TEMPLATE_ID à mão.</div></details></section>
 <section id="sec1"><h1>Cenários</h1>
-<table><tr><th>#</th><th>Cenário</th><th>Método de falha</th><th>Prova</th></tr><tr><td>1</td><td>Desconexão em estado estável</td><td>FIS (disrupt-connectivity)</td><td>Pods existentes continuam; node NotReady; tolerations impedem eviction</td></tr><tr><td>1b</td><td>Comunicação multi-node on-prem</td><td>FIS (mesmo do 1)</td><td>Node1→Node2 continua funcionando</td></tr><tr><td>2</td><td>Desconexão durante provisioning</td><td>FIS + <code>kubectl scale</code></td><td>Pods novos ficam Pending; existentes intactos</td></tr><tr><td>3a</td><td>LB Região → Hybrid Nodes</td><td>ALB + curl</td><td>Tráfego externo alcança pods on-prem</td></tr><tr><td>3b</td><td>Hybrid Nodes → Externo</td><td><code>exec</code> + curl</td><td>Pods on-prem acessam APIs externas</td></tr><tr><td>3c</td><td>LB On-Premises (MetalLB VIP)</td><td>curl ao VIP</td><td>Entrada local independente da AWS</td></tr><tr><td>4</td><td>Restart de node DURANTE desconexão</td><td>vCenter restart</td><td>Pods não voltam até reconectar; réplicas multi-node salvam</td></tr></table></section>
+<table><tr><th>#</th><th>Cenário</th><th>Método de falha</th><th>Prova</th></tr><tr><td>1</td><td>Desconexão em estado estável</td><td>FIS (disrupt-connectivity)</td><td>Pods existentes continuam; node NotReady; tolerations impedem eviction</td></tr><tr><td>1b</td><td>Comunicação multi-node on-prem</td><td>FIS (mesmo do 1)</td><td>Node1→Node2 continua funcionando</td></tr><tr><td>2</td><td>Desconexão durante provisioning</td><td>FIS + <code>kubectl scale</code></td><td>Pods novos ficam Pending; existentes intactos</td></tr><tr><td>3a</td><td>LB Região → Hybrid Nodes</td><td>ALB + curl</td><td>Tráfego externo alcança pods on-prem</td></tr><tr><td>3b</td><td>Hybrid Nodes → Externo</td><td><code>exec</code> + curl</td><td>Pods on-prem acessam APIs externas</td></tr><tr><td>3c</td><td>LB On-Premises (MetalLB VIP)</td><td>curl ao VIP</td><td>Entrada local independente da AWS</td></tr><tr><td>4</td><td>Restart de node DURANTE desconexão</td><td>vCenter restart</td><td>Pods não voltam até reconectar; réplicas multi-node salvam</td></tr></table>
+<p><img src="https://docs.aws.amazon.com/images/eks/latest/best-practices/images/hybrid/k8s-components-pod-failover.png" alt="Componentes do Kubernetes no pod failover durante desconexões de rede"/></p>
+<p>*Componentes envolvidos no comportamento de failover de pods durante desconexões (fonte: <a href="https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-kubernetes-pod-failover.html">EKS Best Practices - Pod Failover</a>).*</p></section>
 <section id="fase0"><h1>Fase 0: Preparar o ambiente <span class="duration">2 min</span></h1>
 <p>Antes de tudo, confirmar em qual cluster estamos apontando. Numa rotina de várias demos, apontar para o cluster errado é o erro mais comum - sempre valide.</p>
 <p>Listar os contextos do kubeconfig:</p>
@@ -82,6 +86,8 @@ code{background:#2a2a2a;color:#e8d5a3;padding:2px 6px;border-radius:4px;font-siz
 <pre><code class="language-bash">aws eks update-kubeconfig --name llm-vmware-hybrid --region sa-east-1</code></pre>
 <p>Confirmar o contexto atual antes de seguir:</p>
 <pre><code class="language-bash">kubectl config current-context</code></pre>
+<h3>Links e acessos do ambiente (deixe abertos)</h3>
+<table><tr><th>Recurso</th><th>Endereço</th><th>Uso</th></tr><tr><td>App via ALB (região AWS)</td><td><code>kubectl get ingress demo-ingress -n demo-stone -o jsonpath=&#x27;{.status.loadBalancer.ingress[0].hostname}&#x27;</code></td><td>Ingress region-originated - cai no disconnect</td></tr><tr><td>App via VIP on-prem (MetalLB)</td><td>http://192.168.3.240/</td><td>Entrada local - sobrevive ao disconnect</td></tr><tr><td>Grafana on-prem</td><td>http://192.168.3.242/</td><td>Dashboard de saúde dos nodes + conectividade com a nuvem (anônimo)</td></tr><tr><td>SSH Node 1 / Node 2</td><td><code>ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51</code> / <code>...52</code></td><td>Comandos no node (crictl, iptables)</td></tr><tr><td>Cluster EKS</td><td><code>aws eks update-kubeconfig --name llm-vmware-hybrid --region sa-east-1</code></td><td>kubectl</td></tr></table>
 <details class="callout callout-info"><summary>Setup: Ferramentas recomendadas: <code>kubectl</code>, <code>jq</code>, <code>k9s</code> (painel visual) e `ku...</summary><div>Ferramentas recomendadas: <code>kubectl</code>, <code>jq</code>, <code>k9s</code> (painel visual) e <code>kube-ps1</code> no prompt (mostra o contexto atual, evita rodar no cluster errado). Layout: HTML do runbook na esquerda, iTerm2 na direita; na Fase 3, divida o terminal em 3 panes para os 3 clients lado a lado.</div></details>
 <details class="callout callout-warn"><summary>Nota: sobre sudo no node: os comandos com <code>sudo</code> (crictl, iptables) pedem a ...</summary><div>Nota sobre sudo no node: os comandos com <code>sudo</code> (crictl, iptables) pedem a senha do usuário lopbruno ao logar interativo. Digite a senha quando pedir. Para fluir sem prompt na demo, opcionalmente configure NOPASSWD no node: <code>echo &quot;lopbruno ALL=(ALL) NOPASSWD: /usr/local/bin/crictl, /usr/sbin/iptables&quot; | sudo tee /etc/sudoers.d/demo</code></div></details></section>
 <section id="fase1"><h1>Fase 1: Estado atual <span class="duration">5 min</span></h1>
@@ -249,21 +255,30 @@ echo &quot;http://192.168.3.242/  (dashboard: On-Prem - Saude dos Nodes + Conect
 <p>O dashboard mostra:</p>
 <ul><li>Conectividade On-Prem para Nuvem (probe ICMP ao VPC): CONECTADO / DESCONECTADO</li><li>Hybrid Nodes UP (monitorados localmente pelo Prometheus on-prem)</li><li>CPU e memória por hybrid node</li></ul>
 <details class="callout callout-info"><summary>Detalhe: Durante a Fase 3 (FIS ativo), o painel &quot;Conectividade On-Prem para Nuv...</summary><div>Durante a Fase 3 (FIS ativo), o painel &quot;Conectividade On-Prem para Nuvem&quot; muda para DESCONECTADO (vermelho), enquanto os hybrid nodes seguem UP e o Grafana continua respondendo - porque o stack inteiro roda on-prem. É a prova de que o DC mantém observabilidade própria mesmo cego para a AWS. Deixe este dashboard aberto desde o início, ao lado das URLs do podinfo.</div></details></section>
-<section id="sec4"><h1>Perguntas prováveis do cliente</h1>
-<h3>1. &quot;E storage persistente? Nossos workloads stateful?&quot;</h3>
-<p>Stateful FUNCIONA em Hybrid Nodes - o que NÃO funciona é EBS (o EBS CSI não está na lista de add-ons compatíveis; volume é preso à AZ). Opções locais: (1) <strong>hostPath</strong> - simples, preso ao node (é como o sample oficial de GPU burst persiste modelos LLM de ~3GB localmente); (2) <strong>local PersistentVolumes</strong> com nodeAffinity; (3) <strong>CSI de terceiros</strong> (Longhorn/Ceph/OpenEBS ou o CSI do storage array do DC). FSx CSI está na lista, mas é storage de rede dependente da região (falha na desconexão). Ação: validar com o time de storage do cliente qual CSI o array deles oferece. Fonte: docs.aws.amazon.com/eks/latest/userguide/hybrid-nodes-add-ons.html</p>
-<h3>2. &quot;Como fica a observabilidade DURANTE a desconexão? Ficamos cegos?&quot;</h3>
-<p>Métricas/logs para CloudWatch/AMP param de fluir durante o disconnect (dependência regional). Mitigação (best practices): backend LOCAL secundário (Prometheus local + ADOT dual-exporter) e <code>crictl</code> para troubleshooting sem control plane. Do lado AWS, alarme CloudWatch em NodeNotReady (control plane logs) detecta a desconexão.</p>
-<h3>3. &quot;Pod que CRASHA durante a desconexão reinicia?&quot;</h3>
-<p>SIM - diferente do restart de NODE (Cenário 4). O kubelet gerencia restartPolicy localmente, sem API server, DESDE QUE a imagem esteja no cache do containerd. Por isso: pre-pull de imagens críticas + GC do containerd configurado para não descartar imagens (<code>discard_unpacked_layers=false</code>).</p>
-<h3>4. &quot;E se a desconexão durar mais de 12 horas?&quot;</h3>
-<p>SSM: credencial de 1h, para de renovar desconectado (reconexão pode levar até 30min de backoff - restart do agent força). IAM Roles Anywhere: até 12h configurável, reconexão em segundos. IMPORTANTE: os PODS continuam rodando independente de credencial expirada - ela afeta só a comunicação node↔AWS. Para janelas longas: IRA com durationSeconds alto.</p>
-<h3>5. &quot;Nosso IDP usa admission webhooks (policy engines). O que acontece?&quot;</h3>
-<p><strong>Gotcha de produção:</strong> se um webhook backend roda nos hybrid nodes e o DC desconecta, o API server não o alcança. Com <code>failurePolicy: Fail</code>, isso BLOQUEIA operações no cluster INTEIRO (não só on-prem). Recomendações: webhooks críticos em nodes cloud, ou <code>failurePolicy: Ignore</code> + réplicas nos dois lados. Revisar os webhooks da plataforma (Kyverno/OPA/etc) nesse critério.</p>
-<h3>6. &quot;E o cloud bursting que discutimos na reunião?&quot;</h3>
-<p>Estratégia validada em outro lab (Karpenter + Spot quando o hardware local satura, via KEDA/Prometheus). Não faz parte desta demo de resiliência - pode ser uma demo #2. Nota: bursting DEPENDE da conectividade com a região - complementar à resiliência, não substituto.</p>
-<h3>7. &quot;Chicago e Atlanta: um cluster para os dois DCs?&quot;</h3>
-<p>Recomendação: <strong>um cluster por DC</strong> (blast radius, upgrades independentes, latência). Se optarem por cluster único com nodes nos dois DCs: zone labels por DC são OBRIGATÓRIAS - o Kubernetes cancela evictions quando uma zona INTEIRA fica unreachable, protegendo cada DC. Requisito de rede: até 200ms RTT e 100Mbps+ por DC (docs oficiais).</p></section>
+<section id="sec4"><h1>F.A.Q</h1>
+<h3>E storage persistente? Nossos workloads stateful?</h3>
+<p>Stateful <strong>funciona</strong> em Hybrid Nodes - o que <strong>não</strong> funciona é EBS (preso à AZ, e o EBS CSI não está na lista de add-ons compatíveis). Opções locais:</p>
+<ul><li><strong>hostPath</strong> - simples, preso ao node (é como o <a href="https://github.com/aws-samples/sample-eks-hybrid-nodes-gpu-burst-scaling">sample oficial de GPU burst</a> persiste modelos LLM localmente)</li><li><strong>local PersistentVolumes</strong> com <code>nodeAffinity</code></li><li><strong>CSI de terceiros</strong> - Longhorn, Ceph, OpenEBS, ou o CSI do storage array do próprio DC</li><li><strong>FSx CSI</strong> está na lista de compatíveis, mas é storage de rede dependente da região (falha na desconexão)</li></ul>
+<p><strong>Ação:</strong> validar com o time de storage do cliente qual CSI o array deles oferece. Ref: <a href="https://docs.aws.amazon.com/eks/latest/userguide/hybrid-nodes-add-ons.html">add-ons compatíveis</a>.</p>
+<h3>Como fica a observabilidade DURANTE a desconexão? Ficamos cegos?</h3>
+<p>Métricas/logs para CloudWatch/AMP <strong>param de fluir</strong> durante o disconnect (dependência regional). Mitigações:</p>
+<ul><li><strong>Backend local</strong> secundário: Prometheus on-prem + ADOT com dual-exporter (é o que a Fase 7 demonstra)</li><li><strong><code>crictl</code></strong> para troubleshooting local sem control plane</li><li>Do lado AWS: alarme <strong>CloudWatch em NodeNotReady</strong> (control plane logs) detecta a desconexão</li></ul>
+<p>Ref: <a href="https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-network-disconnections.html">best practices - network disconnections</a>.</p>
+<h3>Pod que CRASHA durante a desconexão reinicia?</h3>
+<p><strong>Sim</strong> - diferente do restart de <strong>node</strong> (Cenário 4). O kubelet gerencia o <code>restartPolicy</code> localmente, sem API server, <strong>desde que a imagem esteja no cache do containerd</strong>. Pré-requisitos em produção:</p>
+<ul><li><strong>Pre-pull</strong> das imagens críticas em todos os nodes</li><li>GC do containerd com <code>discard_unpacked_layers=false</code> (não descartar imagens)</li></ul>
+<h3>E se a desconexão durar mais de 12 horas?</h3>
+<p>Os <strong>pods continuam rodando</strong> independente de credencial expirada - ela afeta só a comunicação node↔AWS, não o workload local. Sobre as credenciais:</p>
+<ul><li><strong>SSM Hybrid Activation:</strong> credencial de 1h; para de renovar offline (reconexão pode levar até 30min de backoff - <code>systemctl restart</code> do agent força)</li><li><strong>IAM Roles Anywhere:</strong> até 12h configurável, reconexão em segundos</li></ul>
+<p><strong>Para janelas longas:</strong> IRA com <code>durationSeconds</code> alto. Ref: <a href="https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-host-creds.html">host credentials</a>.</p>
+<h3>Nosso IDP usa admission webhooks (policy engines). O que acontece?</h3>
+<p><strong>Gotcha de produção importante:</strong> se um webhook backend roda nos hybrid nodes e o DC desconecta, o API server não o alcança.</p>
+<ul><li>Com <code>failurePolicy: Fail</code>, isso <strong>bloqueia operações no cluster INTEIRO</strong> (não só on-prem)</li><li><strong>Recomendações:</strong> rodar webhooks críticos em nodes cloud, ou usar <code>failurePolicy: Ignore</code> + réplicas nos dois lados</li><li><strong>Ação:</strong> revisar os webhooks da plataforma (Kyverno/OPA/Gatekeeper) sob esse critério</li></ul>
+<h3>E o cloud bursting?</h3>
+<p>Demonstrado na <strong>Fase 6</strong> (overflow) e evoluível para <strong>Karpenter + Spot</strong> disparado por KEDA/Prometheus. Nota: bursting <strong>depende</strong> da conectividade com a região - é complementar à resiliência (um usa a nuvem quando ela está lá, o outro sobrevive quando não está).</p>
+<h3>Chicago e Atlanta: um cluster para os dois DCs?</h3>
+<p><strong>Recomendação: um cluster por DC</strong> (blast radius menor, upgrades independentes, menor latência). Se optarem por cluster único com nodes nos dois DCs:</p>
+<ul><li><strong>Zone labels obrigatórias</strong> (<code>topology.kubernetes.io/zone</code> por DC) - o Kubernetes cancela evictions quando uma zona INTEIRA fica unreachable, protegendo cada DC</li><li>Requisito de rede: até <strong>200ms RTT</strong> e <strong>100Mbps+</strong> por DC</li></ul></section>
 <section id="sec5"><h1>Cleanup</h1>
 <pre><code class="language-bash">kubectl delete ns demo-stone
 cd terraform/ &amp;&amp; terraform destroy</code></pre></section>
