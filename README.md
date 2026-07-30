@@ -139,14 +139,14 @@ client-cloud-to-hybrid-xxxxx      1/1    Running  ip-10-43.. (EKS Region)
 
 ## Why This Maps to the Customer Use Case
 
-Stone's Karavela (Kubernetes-based IDP) must run in the Chicago and Atlanta
+the customer's a plataforma IDP (Kubernetes-based IDP) must run in the Chicago and Atlanta
 datacenters with a hard requirement: **if AWS goes down, the datacenter must not
 stop**. This demo maps directly:
 
 - **Scenario 1/1b (disconnect resilience)** = the core requirement. Workloads on-prem
   keep serving, including cross-node communication within the DC, when the AWS
   link is lost.
-- **Scenario 3c (MetalLB VIP)** = analogous to Stone's planned NodePort + F5 static
+- **Scenario 3c (MetalLB VIP)** = analogous to the customer's planned NodePort + F5 static
   entry point. The local LB keeps serving with zero AWS dependency.
 - **Scenario 2/4 (limitations)** = transparent about what does NOT work (new
   scheduling during disconnect, node restart offline), with the mitigation:
@@ -812,7 +812,7 @@ kubectl logs -n demo-stone deploy/client-hybrid-to-hybrid --tail=3
 - Pods on the restarted node stay down until reconnection - **this is why replica count and multi-node distribution matter**
 - The app survived because replicas exist on the OTHER node (exactly the pattern we recommend: N+1/N+2 across nodes)
 - Static pods are the only workload the kubelet can start offline, but they are NOT recommended for applications - multi-node replicas are the right mitigation
-- For Karavela: distribute critical services across at least 2-3 nodes per DC
+- For a plataforma IDP: distribute critical services across at least 2-3 nodes per DC
 
 #### Phase 4b (bonus): Static Pod - the exception that proves the rule
 
@@ -844,7 +844,7 @@ curl -s http://192.168.3.52:8080/ | jq '{hostname, message}'
 **Key talking point:**
 > "Static pods survive an offline restart, but everything AROUND them
 > (Service routing, LB announcement) doesn't. That's why AWS docs don't
-> recommend static pods for applications. The right answer for Karavela
+> recommend static pods for applications. The right answer for a plataforma IDP
 > is what we showed in Scenario 4: replicas distributed across nodes,
 > so a node loss during disconnect never takes the app down."
 
@@ -995,7 +995,7 @@ tolerations:
 
 **Key insights for the discussion:**
 
-1. **Tolerations are per-pod, not per-cluster.** Each application team tunes its own value based on its business requirements. Karavela can offer profiles (e.g., "resilient" vs "fast-failover") as IDP presets.
+1. **Tolerations are per-pod, not per-cluster.** Each application team tunes its own value based on its business requirements. the platform can offer profiles (e.g., "resilient" vs "fast-failover") as IDP presets.
 2. **Replicas across nodes reduce the pressure on this decision.** If the app has replicas on 3 nodes, a long toleration costs little: a real single-node failure only degrades capacity, and the disconnection case is fully covered. This combo (long toleration + multi-node replicas) is the recommended pattern for the DC-critical profile.
 3. **Zone labels change the game for FULL-DC disconnects.** If all hybrid nodes carry a `topology.kubernetes.io/zone` label per DC (e.g., `zone=chicago-dc1`), Kubernetes CANCELS evictions when the entire zone is unreachable - even without custom tolerations. Tolerations then only matter for PARTIAL failures (some nodes down, some up). Configure via nodeadm: `--node-labels=topology.kubernetes.io/zone=dc1`.
 4. **The 300s default is not configurable in EKS** (`default-unreachable-toleration-seconds` is control-plane managed). Per-pod tolerations are the only lever - which is fine, because per-app is where this decision belongs.

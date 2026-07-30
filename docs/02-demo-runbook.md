@@ -147,7 +147,7 @@ sudo crictl exec $CID curl -s https://checkip.amazonaws.com
 
 ### 2c. LB On-Premises (MetalLB VIP)
 
-O VIP local (192.168.3.240) é o papel que o F5 exerce no design de produção da Stone:
+O VIP local (192.168.3.240) é o papel que o F5 exerce no design de produção do cliente:
 
 ```bash
 # Da LAN on-prem (ou do próprio node):
@@ -432,7 +432,7 @@ está na lista de add-ons compatíveis; volume é preso à AZ). Opções locais:
 burst persiste modelos LLM de ~3GB localmente); (2) **local PersistentVolumes**
 com nodeAffinity; (3) **CSI de terceiros** (Longhorn/Ceph/OpenEBS ou o CSI do
 storage array do DC). FSx CSI está na lista, mas é storage de rede dependente
-da região (falha na desconexão). Ação: validar com o time de storage da Stone
+da região (falha na desconexão). Ação: validar com o time de storage do cliente
 qual CSI o array deles oferece.
 Fonte: docs.aws.amazon.com/eks/latest/userguide/hybrid-nodes-add-ons.html
 
@@ -461,7 +461,7 @@ Para janelas longas: IRA com durationSeconds alto.
 desconecta, o API server não o alcança. Com `failurePolicy: Fail`, isso BLOQUEIA
 operações no cluster INTEIRO (não só on-prem). Recomendações: webhooks críticos
 em nodes cloud, ou `failurePolicy: Ignore` + réplicas nos dois lados. Revisar os
-webhooks do Karavela (Kyverno/OPA/etc) nesse critério.
+webhooks da plataforma (Kyverno/OPA/etc) nesse critério.
 
 ### 6. "E o cloud bursting que discutimos na reunião?"
 Estratégia validada em outro lab (Karpenter + Spot quando o hardware local

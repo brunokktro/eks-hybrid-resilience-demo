@@ -35,7 +35,7 @@ privado + Direct Connect, o FIS derruba os dois.
 **Status:** Aceito.
 
 **Contexto:** demonstrar entrada de tráfego local no DC, independente da AWS,
-análoga ao design de produção da Stone (NodePort + F5 + Gateway API).
+análoga ao design de produção do cliente (NodePort + F5 + Gateway API).
 
 **Decisão:** MetalLB em modo L2 (VIP anunciado por ARP na LAN).
 
@@ -45,7 +45,7 @@ sem VM extra. Demonstra o CONCEITO (VIP local estável) sem o custo/complexidade
 do F5 trial (30 dias, VM dedicada).
 
 **Alternativa rejeitada:** F5 trial. Venceria numa PoC que precise validar
-especificamente a integração com o F5 que a Stone já tem em produção - aí o
+especificamente a integração com o F5 que o cliente já tem em produção - aí o
 esforço se justifica.
 
 ## ADR-03: Cilium (VXLAN) e o comportamento durante disconnect
@@ -59,7 +59,7 @@ esforço se justifica.
 modo VXLAN (não BGP). O datapath VXLAN é kernel-level (eBPF) e persiste mesmo se
 o agent reiniciar. BGP não habilitado = não há sessão BGP para cair.
 
-**Quando o BGP venceria:** se a Stone publicar services via BGP direto do Cilium
+**Quando o BGP venceria:** se o cliente publicar services via BGP direto do Cilium
 (estilo MetalLB-BGP), aí precisa do v1.17 + `k8s-heartbeat-timeout` configurado.
 
 ## ADR-04: NotReady via bloqueio iptables cirúrgico (não NIC disconnect)
