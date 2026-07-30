@@ -49,6 +49,11 @@ kubectl config current-context
 > HTML do runbook na esquerda, iTerm2 na direita; na Fase 3, divida o terminal
 > em 3 panes para os 3 clients lado a lado.
 
+> Nota sobre sudo no node: os comandos com `sudo` (crictl, iptables) pedem a
+> senha do usuário lopbruno ao logar interativo. Digite a senha quando pedir.
+> Para fluir sem prompt na demo, opcionalmente configure NOPASSWD no node:
+> `echo "lopbruno ALL=(ALL) NOPASSWD: /usr/local/bin/crictl, /usr/sbin/iptables" | sudo tee /etc/sudoers.d/demo`
+
 ## Fase 1: Estado atual (5 min)
 
 Abra as duas URLs do podinfo no browser ANTES de tudo, e deixe abertas o tempo
