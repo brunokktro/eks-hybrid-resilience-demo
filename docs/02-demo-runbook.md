@@ -159,7 +159,7 @@ O VIP local (192.168.3.240) é o papel que o F5 exerce no design de produção d
 curl -s http://192.168.3.240/ | jq '{hostname, message}'
 ```
 
-## Fase 3: Desconexão em estado estável (10 min) - NÚCLEO DA DEMO
+## Fase 3: Desconexão em estado estável (10 min)
 
 Abra três terminais com os logs dos clients lado a lado:
 
@@ -325,7 +325,7 @@ kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
 kubectl scale deploy server-hybrid-1 -n demo-stone --replicas=2
 ```
 
-## Trade-off das Tolerations (discutir abertamente)
+## Trade-off das Tolerations
 
 A demo usa `tolerationSeconds: 3600` (1h). **Não existe valor universal** - o
 mesmo mecanismo que protege na desconexão ATRASA a recuperação numa falha real
@@ -341,7 +341,7 @@ de node (o control plane não distingue "rede caiu" de "node morreu").
 CANCELA evictions quando a zona inteira fica unreachable - o cenário "AWS caiu"
 já fica protegido por design.
 
-## Limitações conhecidas (transparência com o cliente)
+## Limitações conhecidas
 
 | Limitação | Mitigação |
 |-----------|-----------|
@@ -428,7 +428,7 @@ O dashboard mostra:
 > DC mantém observabilidade própria mesmo cego para a AWS. Deixe este dashboard
 > aberto desde o início, ao lado das URLs do podinfo.
 
-## Perguntas prováveis do cliente (preparação)
+## Perguntas prováveis do cliente
 
 ### 1. "E storage persistente? Nossos workloads stateful?"
 Stateful FUNCIONA em Hybrid Nodes - o que NÃO funciona é EBS (o EBS CSI não

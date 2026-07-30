@@ -57,15 +57,15 @@ code{background:#2a2a2a;color:#e8d5a3;padding:2px 6px;border-radius:4px;font-siz
 <a href="#fase0">Fase 0: Preparar o ambiente</a>
 <a href="#fase1">Fase 1: Estado atual</a>
 <a href="#fase2">Fase 2: Testes de LB - happy path</a>
-<a href="#fase3">Fase 3: Desconexão em estado estável - NÚCLEO DA DEMO</a>
+<a href="#fase3">Fase 3: Desconexão em estado estável</a>
 <a href="#fase3cache">Fase 3-cache: Pod crash durante a desconexão - image cache</a>
 <a href="#fase4">Fase 4: Desconexão durante provisioning</a>
 <a href="#fase5">Fase 5: Recovery</a>
-<a href="#sec2">Trade-off das Tolerations (discutir abertamente)</a>
-<a href="#sec3">Limitações conhecidas (transparência com o cliente)</a>
+<a href="#sec2">Trade-off das Tolerations</a>
+<a href="#sec3">Limitações conhecidas</a>
 <a href="#fase6">Fase 6: Cloud Bursting - overflow do DC para a AWS</a>
 <a href="#fase7">Fase 7: Observabilidade on-premises</a>
-<a href="#sec4">Perguntas prováveis do cliente (preparação)</a>
+<a href="#sec4">Perguntas prováveis do cliente</a>
 <a href="#sec5">Cleanup</a>
 </nav>
 <main class="content">
@@ -137,7 +137,7 @@ sudo crictl exec $CID curl -s https://checkip.amazonaws.com</code></pre>
 <p>O VIP local (192.168.3.240) é o papel que o F5 exerce no design de produção do cliente:</p>
 <pre><code class="language-bash"># Da LAN on-prem (ou do próprio node):
 curl -s http://192.168.3.240/ | jq &#x27;{hostname, message}&#x27;</code></pre></section>
-<section id="fase3"><h1>Fase 3: Desconexão em estado estável - NÚCLEO DA DEMO <span class="duration">10 min</span></h1>
+<section id="fase3"><h1>Fase 3: Desconexão em estado estável <span class="duration">10 min</span></h1>
 <p>Abra três terminais com os logs dos clients lado a lado:</p>
 <pre><code class="language-bash"># Terminal 1 - LOCAL (Node1 → Node1)
 kubectl logs -n demo-stone deploy/client-hybrid -f
@@ -213,11 +213,11 @@ server-hybrid-1-wwwww   Pending   (NOVO - scheduler não alcança o node)</code>
 <p>O client-cloud-to-hybrid volta a 200 sozinho (auto-heal), o node volta Ready, os pods Pending são agendados. Zero intervenção manual.</p>
 <pre><code class="language-bash">kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
 kubectl scale deploy server-hybrid-1 -n demo-stone --replicas=2</code></pre></section>
-<section id="sec2"><h1>Trade-off das Tolerations (discutir abertamente)</h1>
+<section id="sec2"><h1>Trade-off das Tolerations</h1>
 <p>A demo usa <code>tolerationSeconds: 3600</code> (1h). <strong>Não existe valor universal</strong> - o mesmo mecanismo que protege na desconexão ATRASA a recuperação numa falha real de node (o control plane não distingue &quot;rede caiu&quot; de &quot;node morreu&quot;).</p>
 <table><tr><th>Perfil da app</th><th>tolerationSeconds sugerido</th></tr><tr><td>Stateless com réplicas em vários nodes</td><td>300-900 (failover rápido importa mais)</td></tr><tr><td>Stateful singleton</td><td>Longo/indefinido (evita split-brain)</td></tr><tr><td>DC-crítica (&quot;se a AWS cair&quot;)</td><td>Longo + réplicas em múltiplos nodes</td></tr></table>
 <p><strong>Insight:</strong> com zone labels (<code>topology.kubernetes.io/zone</code> por DC), o Kubernetes CANCELA evictions quando a zona inteira fica unreachable - o cenário &quot;AWS caiu&quot; já fica protegido por design.</p></section>
-<section id="sec3"><h1>Limitações conhecidas (transparência com o cliente)</h1>
+<section id="sec3"><h1>Limitações conhecidas</h1>
 <table><tr><th>Limitação</th><th>Mitigação</th></tr><tr><td>Control plane na região (sem scheduling na desconexão)</td><td>Pré-dimensionar réplicas</td></tr><tr><td>SSM credentials: 1h / IAM Roles Anywhere: até 12h</td><td>Usar IRA com durationSeconds alto</td></tr><tr><td>Cilium pode reiniciar na desconexão (BGP)</td><td>v1.17+ tem o fix; usar VXLAN (nosso caso)</td></tr><tr><td>Restart de node offline: pods não voltam</td><td>Réplicas multi-node (Cenário 4)</td></tr><tr><td>ALB region-originated cai na desconexão</td><td>LB local (MetalLB/F5) para tráfego do DC</td></tr></table></section>
 <section id="fase6"><h1>Fase 6: Cloud Bursting - overflow do DC para a AWS <span class="duration">10 min</span></h1>
 <p>Cenário complementar (não é resiliência, é elasticidade): a app da plataforma roda no DATACENTER e, sob pico de carga, transborda para a AWS. Simples e realista - sem GPU/LLM, apenas scheduling nativo do Kubernetes.</p>
@@ -249,7 +249,7 @@ echo &quot;http://192.168.3.242/  (dashboard: On-Prem - Saude dos Nodes + Conect
 <p>O dashboard mostra:</p>
 <ul><li>Conectividade On-Prem para Nuvem (probe ICMP ao VPC): CONECTADO / DESCONECTADO</li><li>Hybrid Nodes UP (monitorados localmente pelo Prometheus on-prem)</li><li>CPU e memória por hybrid node</li></ul>
 <details class="callout callout-info"><summary>Detalhe: Durante a Fase 3 (FIS ativo), o painel &quot;Conectividade On-Prem para Nuv...</summary><div>Durante a Fase 3 (FIS ativo), o painel &quot;Conectividade On-Prem para Nuvem&quot; muda para DESCONECTADO (vermelho), enquanto os hybrid nodes seguem UP e o Grafana continua respondendo - porque o stack inteiro roda on-prem. É a prova de que o DC mantém observabilidade própria mesmo cego para a AWS. Deixe este dashboard aberto desde o início, ao lado das URLs do podinfo.</div></details></section>
-<section id="sec4"><h1>Perguntas prováveis do cliente (preparação)</h1>
+<section id="sec4"><h1>Perguntas prováveis do cliente</h1>
 <h3>1. &quot;E storage persistente? Nossos workloads stateful?&quot;</h3>
 <p>Stateful FUNCIONA em Hybrid Nodes - o que NÃO funciona é EBS (o EBS CSI não está na lista de add-ons compatíveis; volume é preso à AZ). Opções locais: (1) <strong>hostPath</strong> - simples, preso ao node (é como o sample oficial de GPU burst persiste modelos LLM de ~3GB localmente); (2) <strong>local PersistentVolumes</strong> com nodeAffinity; (3) <strong>CSI de terceiros</strong> (Longhorn/Ceph/OpenEBS ou o CSI do storage array do DC). FSx CSI está na lista, mas é storage de rede dependente da região (falha na desconexão). Ação: validar com o time de storage do cliente qual CSI o array deles oferece. Fonte: docs.aws.amazon.com/eks/latest/userguide/hybrid-nodes-add-ons.html</p>
 <h3>2. &quot;Como fica a observabilidade DURANTE a desconexão? Ficamos cegos?&quot;</h3>
