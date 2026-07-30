@@ -1,0 +1,246 @@
+# On-Premises Monitoring Stack - Prometheus + Grafana + Blackbox
+#
+# "A moda antiga": roda 100% NOS hybrid nodes (nodeSelector compute-type=hybrid
+# + tolerations), independente da nuvem. Da a visibilidade que o Container
+# Insights (cloud-side) NAO da: a visao DO ON-PREM enxergando a nuvem.
+#
+# O que mostra:
+#   - Saude dos hybrid nodes (CPU, memoria, disco) via node-exporter local
+#   - Conectividade on-prem -> nuvem via blackbox probe (EKS endpoint). Durante
+#     a desconexao, o probe cai (DOWN) = o DC "ve" que perdeu a AWS, e continua
+#     monitorando localmente (o stack sobrevive porque roda on-prem)
+#
+# Exposto via MetalLB on-prem VIP (funciona e sobrevive ao disconnect porque os
+# pods estao NOS hybrid nodes).
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: onprem-monitoring
+  labels:
+    demo: hybrid-resilience
+---
+# ============ Blackbox Exporter (sonda a nuvem a partir do on-prem) ============
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blackbox-config
+  namespace: onprem-monitoring
+data:
+  blackbox.yml: |
+    modules:
+      http_2xx:
+        prober: http
+        timeout: 5s
+        http:
+          preferred_ip_protocol: ip4
+          fail_if_not_ssl: false
+          valid_status_codes: [200,301,302,401,403]   # qualquer resposta HTTP = alcancavel
+      icmp:
+        prober: icmp
+        timeout: 5s
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blackbox-exporter
+  namespace: onprem-monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: blackbox-exporter}
+  template:
+    metadata:
+      labels: {app: blackbox-exporter}
+    spec:
+      nodeSelector:
+        eks.amazonaws.com/compute-type: hybrid
+      tolerations:
+        - {key: "node.kubernetes.io/unreachable", operator: "Exists", effect: "NoExecute", tolerationSeconds: 3600}
+        - {key: "node.kubernetes.io/not-ready", operator: "Exists", effect: "NoExecute", tolerationSeconds: 3600}
+        - {key: "node.cilium.io/agent-not-ready", operator: "Exists", effect: "NoSchedule"}
+      containers:
+        - name: blackbox
+          image: prom/blackbox-exporter:v0.25.0
+          args: ["--config.file=/etc/blackbox/blackbox.yml"]
+          ports: [{containerPort: 9115}]
+          volumeMounts: [{name: cfg, mountPath: /etc/blackbox}]
+          resources: {requests: {cpu: 20m, memory: 32Mi}, limits: {cpu: 100m, memory: 64Mi}}
+      volumes:
+        - name: cfg
+          configMap: {name: blackbox-config}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blackbox-exporter
+  namespace: onprem-monitoring
+spec:
+  selector: {app: blackbox-exporter}
+  ports: [{port: 9115, targetPort: 9115}]
+---
+# ============ Prometheus (on-prem) ============
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: onprem-monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    scrape_configs:
+      # Node-exporters locais dos hybrid nodes (hostNetwork :9100)
+      - job_name: 'hybrid-nodes'
+        static_configs:
+          - targets: ['192.168.3.51:9100', '192.168.3.52:9100']
+            labels: {location: on-prem}
+      # Conectividade on-prem -> nuvem (blackbox probe ao endpoint do EKS)
+      - job_name: 'cloud-connectivity'
+        metrics_path: /probe
+        params: {module: [icmp]}
+        static_configs:
+          - targets:
+              - 10.43.19.112   # cloud node (VPC) - link on-prem->AWS que o FIS corta
+            labels: {probe: aws-vpc-cloud-node}
+        relabel_configs:
+          - {source_labels: [__address__], target_label: __param_target}
+          - {source_labels: [__param_target], target_label: instance}
+          - {target_label: __address__, replacement: blackbox-exporter.onprem-monitoring:9115}
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: onprem-monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: prometheus}
+  template:
+    metadata:
+      labels: {app: prometheus}
+    spec:
+      nodeSelector:
+        eks.amazonaws.com/compute-type: hybrid
+      tolerations:
+        - {key: "node.kubernetes.io/unreachable", operator: "Exists", effect: "NoExecute", tolerationSeconds: 3600}
+        - {key: "node.kubernetes.io/not-ready", operator: "Exists", effect: "NoExecute", tolerationSeconds: 3600}
+        - {key: "node.cilium.io/agent-not-ready", operator: "Exists", effect: "NoSchedule"}
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.54.1
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention.time=6h"
+          ports: [{containerPort: 9090}]
+          volumeMounts:
+            - {name: cfg, mountPath: /etc/prometheus}
+            - {name: data, mountPath: /prometheus}
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: 500m, memory: 512Mi}}
+      volumes:
+        - name: cfg
+          configMap: {name: prometheus-config}
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: onprem-monitoring
+  annotations:
+    metallb.io/address-pool: onprem-pool
+spec:
+  type: LoadBalancer
+  selector: {app: prometheus}
+  ports: [{port: 9090, targetPort: 9090}]
+---
+# ============ Grafana (on-prem) ============
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource
+  namespace: onprem-monitoring
+data:
+  datasource.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus-OnPrem
+        type: prometheus
+        access: proxy
+        url: http://prometheus.onprem-monitoring:9090
+        isDefault: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: onprem-monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: grafana}
+  template:
+    metadata:
+      labels: {app: grafana}
+    spec:
+      nodeSelector:
+        eks.amazonaws.com/compute-type: hybrid
+      tolerations:
+        - {key: "node.kubernetes.io/unreachable", operator: "Exists", effect: "NoExecute", tolerationSeconds: 3600}
+        - {key: "node.kubernetes.io/not-ready", operator: "Exists", effect: "NoExecute", tolerationSeconds: 3600}
+        - {key: "node.cilium.io/agent-not-ready", operator: "Exists", effect: "NoSchedule"}
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.2.0
+          env:
+            - {name: GF_SECURITY_ADMIN_PASSWORD, value: "hybrid-demo"}
+            - {name: GF_AUTH_ANONYMOUS_ENABLED, value: "true"}
+            - {name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: "Viewer"}
+          ports: [{containerPort: 3000}]
+          volumeMounts:
+            - {name: ds, mountPath: /etc/grafana/provisioning/datasources}
+            - {name: dashprov, mountPath: /etc/grafana/provisioning/dashboards}
+            - {name: dashjson, mountPath: /var/lib/grafana/dashboards}
+          resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {cpu: 300m, memory: 256Mi}}
+      volumes:
+        - name: ds
+          configMap: {name: grafana-datasource}
+        - name: dashprov
+          configMap: {name: grafana-dashboards, items: [{key: dashboards.yml, path: dashboards.yml}]}
+        - name: dashjson
+          configMap: {name: grafana-dashboards, items: [{key: onprem.json, path: onprem.json}]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: onprem-monitoring
+  annotations:
+    metallb.io/address-pool: onprem-pool
+spec:
+  type: LoadBalancer
+  selector: {app: grafana}
+  ports: [{port: 80, targetPort: 3000}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: onprem-monitoring
+data:
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: onprem
+        type: file
+        options:
+          path: /var/lib/grafana/dashboards
+  onprem.json: |
+    {"title": "On-Prem: Saude dos Nodes + Conectividade com a Nuvem", "uid": "onprem-hybrid", "schemaVersion": 39, "version": 1, "time": {"from": "now-15m", "to": "now"}, "refresh": "5s", "panels": [{"id": 1, "title": "Conectividade On-Prem -> Nuvem (AWS VPC)", "type": "stat", "gridPos": {"h": 6, "w": 8, "x": 0, "y": 0}, "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "DESCONECTADO", "color": "red"}, "1": {"text": "CONECTADO", "color": "green"}}}]}}, "targets": [{"expr": "probe_success{probe=\"aws-vpc-cloud-node\"}", "refId": "A"}]}, {"id": 2, "title": "Hybrid Nodes UP (monitorados localmente)", "type": "stat", "gridPos": {"h": 6, "w": 8, "x": 8, "y": 0}, "targets": [{"expr": "count(up{job=\"hybrid-nodes\"}==1)", "refId": "A"}]}, {"id": 3, "title": "Latencia do probe para a nuvem (s)", "type": "timeseries", "gridPos": {"h": 6, "w": 8, "x": 16, "y": 0}, "targets": [{"expr": "probe_duration_seconds{probe=\"aws-vpc-cloud-node\"}", "refId": "A"}]}, {"id": 4, "title": "CPU por hybrid node (%)", "type": "timeseries", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6}, "targets": [{"expr": "100 - (avg by(instance)(rate(node_cpu_seconds_total{mode=\"idle\",job=\"hybrid-nodes\"}[2m]))*100)", "refId": "A", "legendFormat": "{{instance}}"}]}, {"id": 5, "title": "Memoria disponivel por hybrid node (%)", "type": "timeseries", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6}, "targets": [{"expr": "node_memory_MemAvailable_bytes{job=\"hybrid-nodes\"}/node_memory_MemTotal_bytes{job=\"hybrid-nodes\"}*100", "refId": "A", "legendFormat": "{{instance}}"}]}]}

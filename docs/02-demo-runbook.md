@@ -398,6 +398,31 @@ por **KEDA/Prometheus** monitorando a carga local. É a mesma estratégia do
 sample oficial aws-samples/sample-eks-hybrid-nodes-gpu-burst-scaling, aplicável
 a workloads web (não só LLM). Pode ser uma demo dedicada.
 
+## Fase 7: Observabilidade on-premises (5 min)
+
+Monitoring "à moda antiga" rodando 100% NOS hybrid nodes (Prometheus + Grafana +
+blackbox), independente da nuvem. Cobre a visibilidade que o Container Insights
+(cloud-side) não dá: a visão DO ON-PREM enxergando a nuvem, e que SOBREVIVE à
+desconexão porque roda localmente.
+
+Abra o Grafana on-prem (acesso anônimo, dashboard já provisionado):
+
+```bash
+# VIP on-prem do Grafana - abrir no browser
+echo "http://192.168.3.242/  (dashboard: On-Prem - Saude dos Nodes + Conectividade com a Nuvem)"
+```
+
+O dashboard mostra:
+- Conectividade On-Prem para Nuvem (probe ICMP ao VPC): CONECTADO / DESCONECTADO
+- Hybrid Nodes UP (monitorados localmente pelo Prometheus on-prem)
+- CPU e memória por hybrid node
+
+> Durante a Fase 3 (FIS ativo), o painel "Conectividade On-Prem para Nuvem" muda
+> para DESCONECTADO (vermelho), enquanto os hybrid nodes seguem UP e o Grafana
+> continua respondendo - porque o stack inteiro roda on-prem. É a prova de que o
+> DC mantém observabilidade própria mesmo cego para a AWS. Deixe este dashboard
+> aberto desde o início, ao lado das URLs do podinfo.
+
 ## Perguntas prováveis do cliente (preparação)
 
 ### 1. "E storage persistente? Nossos workloads stateful?"
