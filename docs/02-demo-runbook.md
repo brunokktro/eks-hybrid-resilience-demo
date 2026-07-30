@@ -51,6 +51,23 @@ kubectl config current-context
 
 ## Fase 1: Estado atual (5 min)
 
+Abra as duas URLs do podinfo no browser ANTES de tudo, e deixe abertas o tempo
+todo - o cliente vê a app viva e o load balancing entre os pods (recarregue e o
+hostname alterna entre as réplicas):
+
+```bash
+# ALB (entrada pela regiao AWS) - abrir no browser
+echo "http://$(kubectl get ingress demo-ingress -n demo-stone -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')/"
+
+# VIP on-prem (MetalLB, entrada local do DC) - abrir no browser
+echo "http://192.168.3.240/"
+```
+
+> Recarregue cada URL algumas vezes: o campo hostname alterna entre server-hybrid-1-*
+> (as duas réplicas). Mostra o LB distribuindo. Guarde estas abas - na Fase 3
+> a URL do ALB vai parar de responder e a do VIP vai continuar, ao vivo.
+
+
 **O que mostrar ao cliente:**
 
 Os nodes do cluster - destacar o hybrid node (hostname `mi-xxxx`, OS Ubuntu, IP on-prem):
@@ -111,9 +128,22 @@ curl -s "http://${ALB}/" | jq '{hostname, message}'
 
 ### 2b. Hybrid Nodes → Externo (Egress)
 
+O teste de egress roda melhor via `crictl exec` no próprio node: `kubectl exec`
+em pods de hybrid node é instável (passa pelo API server -> kubelet:10250 pela
+VPN). E use um endpoint confiável - `checkip.amazonaws.com` (AWS-owned) em vez
+do `httpbin.org`, que retorna 503 com frequência.
+
 ```bash
-kubectl exec -n demo-stone deploy/server-hybrid-1 -- curl -s httpbin.org/ip
+# logar no node 1 primeiro
+ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51
+
+# entao, no node:
+CID=$(sudo crictl ps --name podinfo -q | head -1)
+sudo crictl exec $CID curl -s https://checkip.amazonaws.com
 ```
+
+> Resultado esperado: o IP público de egress do datacenter. Mostra que o pod
+> on-prem sai para a internet pelo caminho do próprio DC, não pela AWS.
 
 ### 2c. LB On-Premises (MetalLB VIP)
 
@@ -149,50 +179,59 @@ aws fis start-experiment \
 
 > Comportamento por tipo de endpoint EKS: se o kubelet alcança o endpoint PÚBLICO do cluster via internet (caso deste lab), o node PERMANECE Ready durante o FIS - a falha derruba apenas o data path (cross-cluster/VXLAN). Em ambientes com endpoint privado + Direct Connect (produção típica), o FIS derruba ambos os paths de uma vez.
 
-### Fase 3-extra: NotReady + Tolerations (bloqueio cirúrgico do control plane)
+### Fase 3b: NotReady + Tolerations (2 nodes)
 
-Para demonstrar o node NotReady SEM afetar a LAN local (NÃO desconecte a NIC -
-isso mataria os paths locais e não reflete o cenário real), bloqueie apenas o
-acesso do kubelet ao endpoint do EKS, no próprio node:
+Para demonstrar os hybrid nodes NotReady SEM afetar a LAN local (nao desconecte
+a NIC - isso mataria os paths locais), bloqueie o acesso do kubelet ao endpoint
+do EKS nos DOIS nodes. Assim o datacenter inteiro fica "perdido" para o control
+plane, que e o cenario real de "a AWS caiu para o DC".
 
-```bash
-# Descobrir os IPs do endpoint EKS
-dig +short <ID_DO_CLUSTER>.gr7.sa-east-1.eks.amazonaws.com
-
-# No node (via SSH): bloquear os 2 IPs
-sudo iptables -I OUTPUT -d <IP1> -j DROP
-sudo iptables -I OUTPUT -d <IP2> -j DROP
-```
-
-**Resultado validado (teste real):** node NotReady em ~60s, taint
-`unreachable:NoExecute` aplicado, pods continuam Running (tolerations!) e a LAN
-local segue 100% (LOCAL, CROSS-NODE e VIP = HTTP 200). Reverter:
+Resolver os IPs do endpoint (mudam - sempre re-resolver):
 
 ```bash
-sudo iptables -D OUTPUT -d <IP1> -j DROP
-sudo iptables -D OUTPUT -d <IP2> -j DROP
-# Node volta a Ready em ~15-20s
+dig +short $(aws eks describe-cluster --name llm-vmware-hybrid \
+  --region sa-east-1 --query 'cluster.endpoint' --output text | sed 's|https://||')
 ```
 
-> Bloqueamos APENAS o caminho do node até o control plane - exatamente o que acontece quando o link com a AWS cai. O node fica NotReady na visão do cluster, mas o datacenter continua 100% operacional: os pods processam, o LB local responde e a comunicação entre nodes segue intacta.
-
-Acompanhar o estado do node:
+Bloquear nos DOIS nodes (via SSH em cada um):
 
 ```bash
-watch -n 5 'kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid'
+# Node 1
+ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51 \
+  "sudo iptables -I OUTPUT -d <IP1> -j DROP; sudo iptables -I OUTPUT -d <IP2> -j DROP"
+
+# Node 2
+ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.52 \
+  "sudo iptables -I OUTPUT -d <IP1> -j DROP; sudo iptables -I OUTPUT -d <IP2> -j DROP"
 ```
 
-**O contraste é a prova (após ~40s):**
+Acompanhar os dois virarem NotReady:
 
-```text
-Terminal 1 (LOCAL):        200 ✓  200 ✓  200 ✓   <- ininterrupto
-Terminal 2 (CROSS-NODE):   200 ✓  200 ✓  200 ✓   <- ininterrupto (mesh on-prem)
-Terminal 3 (CROSS-CLUSTER): 200 ✓  TIMEOUT ✗  TIMEOUT ✗  <- esperado (link caiu)
+```bash
+watch -n5 'kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid'
 ```
 
-> O datacenter continua operando de forma independente, incluindo comunicação ENTRE nodes on-prem. Só o link cross-cluster é afetado - e isso é aceitável, porque o DC é autônomo. É exatamente o requisito do Rogério: se a AWS cair, o DC não para.
+> Resultado esperado: AMBOS os hybrid nodes NotReady em ~60s, taint
+> unreachable:NoExecute aplicado, pods continuam Running (tolerations). E o mais
+> forte: a comunicacao CROSS-NODE (Node1 para Node2) continua 200 - o mesh VXLAN
+> on-prem nao depende do control plane. O DC inteiro opera autonomo.
 
-> Dica k9s (o "money shot"): em `:pods` filtrado em `demo-stone`, os pods no hybrid node permanecem Running (verdes) durante a desconexão - sem eviction. Alterne para `:nodes` e, na Fase 3b, o hybrid node vira NotReady ao vivo enquanto os pods seguem verdes. O contraste visual vale mais que mil palavras.
+Reverter (nos dois nodes):
+
+```bash
+ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51 \
+  "sudo iptables -D OUTPUT -d <IP1> -j DROP; sudo iptables -D OUTPUT -d <IP2> -j DROP"
+ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.52 \
+  "sudo iptables -D OUTPUT -d <IP1> -j DROP; sudo iptables -D OUTPUT -d <IP2> -j DROP"
+```
+
+> Nota (duvida comum): NAO da para alterar Tolerations durante a desconexao -
+> e campo do pod spec, exige o kube-apiserver (inalcancavel offline). A janela de
+> sobrevivencia (tolerationSeconds) tem que ser definida ANTES. Ja o TTL/GC de
+> imagem do containerd e config LOCAL do node, entao esse SIM pode ser alterado
+> via SSH + restart do containerd mesmo offline. Regra: objeto da API = imutavel
+> offline; config local do node = mutavel offline. Ref:
+> https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-kubernetes-pod-failover.html
 
 ## Fase 3-cache: Pod crash durante a desconexão - image cache (5 min)
 
@@ -200,21 +239,37 @@ Terminal 3 (CROSS-CLUSTER): 200 ✓  TIMEOUT ✗  TIMEOUT ✗  <- esperado (link
 SIM - o kubelet gerencia `restartPolicy` localmente, sem API server, DESDE QUE
 a imagem esteja no cache local do containerd.
 
-Com a desconexão ativa (FIS ou bloqueio iptables), mate o container no node:
+O restart e SUB-SEGUNDO (imagem em cache), entao um curl no VIP nao pega o blip
+- com 2 replicas nem cai. A forma de MOSTRAR na tela e pelo restart count do
+container (coluna ATTEMPT do crictl), em dois terminais no node.
+
+Pre-requisito: `crictl` instalado no node (uma vez):
 
 ```bash
-# Via SSH no node 1 - matar o processo do podinfo (simula crash da app)
-ssh lopbruno@192.168.3.51
-sudo pkill -f "podinfo" && echo "container morto"
+ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51
+sudo curl -sL "https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.31.1/crictl-v1.31.1-linux-amd64.tar.gz" | sudo tar -C /usr/local/bin -xz
+echo "runtime-endpoint: unix:///run/containerd/containerd.sock" | sudo tee /etc/crictl.yaml
 ```
 
-Observe o restart local (segundos depois):
+Terminal A (no node) - painel ao vivo do restart count:
 
 ```bash
-# O kubelet reinicia o container com a imagem do cache - sem falar com a AWS
-curl -s -o /dev/null -w "app de volta: HTTP %{http_code}\n" \
-  --max-time 5 http://192.168.3.240/healthz
+ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51
+sudo watch -n1 'crictl ps -a --name podinfo'
 ```
+
+Terminal B (no node) - UM kill unico (nao repita, senao entra em CrashLoopBackOff):
+
+```bash
+ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51
+sudo crictl stop $(sudo crictl ps --name podinfo -q | head -1)
+```
+
+> No Terminal A o cliente ve o container ir para Exited e, em ~2-5s, um novo
+> container Running com ATTEMPT +1 - o kubelet reiniciou da imagem em cache, sem
+> falar com a AWS. Se repetir o kill varias vezes, o backoff exponencial
+> (10s->20s->40s) atrasa o retorno - isso tambem e um bom ponto: o Kubernetes
+> aplica crash-loop backoff localmente, mesmo offline. Para a demo, faca 1 kill.
 
 > O kubelet é autônomo para reiniciar containers - restartPolicy funciona sem control plane. O requisito é a IMAGEM estar no cache local do containerd. Por isso duas configurações são obrigatórias em produção: pre-pull das imagens críticas em todos os nodes, e GC do containerd configurado para não descartar imagens (discard_unpacked_layers=false). Sem isso, um crash durante desconexão vira indisponibilidade - o node não consegue puxar do ECR.
 

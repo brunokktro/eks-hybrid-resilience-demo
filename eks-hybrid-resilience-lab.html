@@ -187,7 +187,11 @@ curl -s "http://${ALB}/" | jq '{hostname, message}'</code></pre>
 <div class="expected">O request chega ao pod on-prem. Fluxo: internet, ALB (região), Gateway, VXLAN, pod on-prem.</div>
 
 <h3>2b. Hybrid Nodes para Externo (Egress)</h3>
-<pre><code class="language-bash">kubectl exec -n demo-stone deploy/server-hybrid-1 -- curl -s httpbin.org/ip</code></pre>
+<p>Rode via <code>crictl exec</code> no próprio node: <code>kubectl exec</code> em pods de hybrid node é instável (passa pelo API server e o kubelet:10250 via VPN). Use um endpoint confiável - <code>checkip.amazonaws.com</code> (AWS-owned) em vez do <code>httpbin.org</code>, que retorna 503 com frequência.</p>
+<pre><code class="language-bash"># via SSH no node 1
+CID=$(sudo crictl ps --name podinfo -q | head -1)
+sudo crictl exec $CID curl -s https://checkip.amazonaws.com</code></pre>
+<div class="expected">O IP público de egress do datacenter - o pod on-prem sai para a internet pelo caminho do próprio DC, não pela AWS.</div>
 
 <h3>2c. Load Balancer On-Premises (MetalLB VIP)</h3>
 <p>O VIP local (192.168.3.240) é o papel que o F5 exerce no design de produção da Stone.</p>

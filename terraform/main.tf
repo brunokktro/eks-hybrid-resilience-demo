@@ -80,7 +80,7 @@ variable "remote_pod_cidr" {
 variable "fault_duration_minutes" {
   description = "Duration of the network fault in minutes (FIS auto-reverts after this)"
   type        = number
-  default     = 5
+  default     = 60
 }
 
 # ─── Data Sources ─────────────────────────────────────────────────────────────
