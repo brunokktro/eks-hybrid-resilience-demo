@@ -104,8 +104,9 @@ echo &quot;http://$(kubectl get ingress demo-ingress -n demo-stone -o jsonpath=&
 # VIP on-prem (MetalLB, entrada local do DC) - abrir no browser
 echo &quot;http://192.168.3.240/&quot;</code></pre>
 <details class="callout callout-info"><summary>Detalhe: Recarregue cada URL algumas vezes: o campo hostname alterna entre serv...</summary><div>Recarregue cada URL algumas vezes: o campo hostname alterna entre server-hybrid-1-* (as duas réplicas) - é o LB distribuindo. Guarde estas abas - na Fase 3 a URL do ALB vai parar de responder e a do VIP vai continuar, ao vivo.</div></details>
-<p>Os nodes do cluster - repare no hybrid node (hostname <code>mi-xxxx</code>, OS Ubuntu, IP on-prem):</p>
-<pre><code class="language-bash">kubectl get nodes -o wide</code></pre>
+<p>Os nodes do cluster - repare no hybrid node (hostname <code>mi-xxxx</code>, IP on-prem <code>192.168.x</code>). A coluna LOCATION deixa claro o lado: <code>lab2-dc1</code> = datacenter on-prem, <code>sa-east-1x</code> = região AWS. Saída enxuta para caber em terminal com split:</p>
+<pre><code class="language-bash">kubectl get nodes -o custom-columns=&#x27;NODE:.metadata.name,STATUS:.status.conditions[?(@.type==&quot;Ready&quot;)].status,LOCATION:.metadata.labels.topology\.kubernetes\.io/zone,IP:.status.addresses[?(@.type==&quot;InternalIP&quot;)].address&#x27;</code></pre>
+<details class="callout callout-info"><summary>Detalhe: Para focar só nos hybrid nodes (ex: na Fase 3, acompanhando eles caíre...</summary><div>Para focar só nos hybrid nodes (ex: na Fase 3, acompanhando eles caírem), filtre por label - saída mínima, ideal para split de tela: <code>`</code>bash kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid \   -o custom-columns=&#x27;NODE:.metadata.name,STATUS:.status.conditions[?(@.type==&quot;Ready&quot;)].status,IP:.status.addresses[?(@.type==&quot;InternalIP&quot;)].address&#x27; <code>`</code></div></details>
 <p>Os pods rodando dos dois lados (verde = on-prem, azul = cloud):</p>
 <pre><code class="language-bash">kubectl get pods -n demo-stone -o wide</code></pre>
 <p>As tolerations que mantêm os pods vivos na desconexão. O manifesto abaixo revela o mecanismo, não só o efeito:</p>

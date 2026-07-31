@@ -89,11 +89,17 @@ echo "http://192.168.3.240/"
 > a URL do ALB vai parar de responder e a do VIP vai continuar, ao vivo.
 
 
-Os nodes do cluster - repare no hybrid node (hostname `mi-xxxx`, OS Ubuntu, IP on-prem):
+Os nodes do cluster - repare no hybrid node (hostname `mi-xxxx`, IP on-prem `192.168.x`). A coluna LOCATION deixa claro o lado: `lab2-dc1` = datacenter on-prem, `sa-east-1x` = região AWS. Saída enxuta para caber em terminal com split:
 
 ```bash
-kubectl get nodes -o wide
+kubectl get nodes -o custom-columns='NODE:.metadata.name,STATUS:.status.conditions[?(@.type=="Ready")].status,LOCATION:.metadata.labels.topology\.kubernetes\.io/zone,IP:.status.addresses[?(@.type=="InternalIP")].address'
 ```
+
+> Para focar só nos hybrid nodes (ex: na Fase 3, acompanhando eles caírem), filtre por label - saída mínima, ideal para split de tela:
+> ```bash
+> kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid \
+>   -o custom-columns='NODE:.metadata.name,STATUS:.status.conditions[?(@.type=="Ready")].status,IP:.status.addresses[?(@.type=="InternalIP")].address'
+> ```
 
 Os pods rodando dos dois lados (verde = on-prem, azul = cloud):
 
