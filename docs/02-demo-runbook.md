@@ -1,11 +1,11 @@
 ---
-title: "Parte 2 - Demo Runbook (ao vivo com o cliente)"
+title: "Parte 2 - Demo Runbook"
 weight: 2
 ---
 
-Este é o roteiro apresentado **ao vivo para o cliente**. Cada fase tem: o que
-mostrar, o comando, o resultado esperado e o ponto de fala. Apresente comando a
-comando, explicando cada um - não use o validador automatizado aqui.
+Cada fase tem um objetivo, os comandos e o resultado esperado. Execute comando a
+comando e acompanhe a saída - o próprio passo elucida o comportamento. Não use o
+validador automatizado aqui.
 
 > Pré-requisito: ambiente já preparado e validado pela Parte 1. Tenha o ALB DNS e o FIS_TEMPLATE_ID à mão.
 
@@ -72,8 +72,8 @@ kubectl config current-context
 
 ## Fase 1: Estado atual (5 min)
 
-Abra as duas URLs do podinfo no browser ANTES de tudo, e deixe abertas o tempo
-todo - o cliente vê a app viva e o load balancing entre os pods (recarregue e o
+Abra as duas URLs do podinfo no browser ANTES de tudo e deixe abertas o tempo
+todo. A app fica viva e o load balancing entre os pods aparece ao recarregar (o
 hostname alterna entre as réplicas):
 
 ```bash
@@ -85,13 +85,11 @@ echo "http://192.168.3.240/"
 ```
 
 > Recarregue cada URL algumas vezes: o campo hostname alterna entre server-hybrid-1-*
-> (as duas réplicas). Mostra o LB distribuindo. Guarde estas abas - na Fase 3
+> (as duas réplicas) - é o LB distribuindo. Guarde estas abas - na Fase 3
 > a URL do ALB vai parar de responder e a do VIP vai continuar, ao vivo.
 
 
-**O que mostrar ao cliente:**
-
-Os nodes do cluster - destacar o hybrid node (hostname `mi-xxxx`, OS Ubuntu, IP on-prem):
+Os nodes do cluster - repare no hybrid node (hostname `mi-xxxx`, OS Ubuntu, IP on-prem):
 
 ```bash
 kubectl get nodes -o wide
@@ -103,8 +101,8 @@ Os pods rodando dos dois lados (verde = on-prem, azul = cloud):
 kubectl get pods -n demo-stone -o wide
 ```
 
-As tolerations que mantêm os pods vivos na desconexão. Mostre o manifesto para
-o cliente entender o mecanismo, não só o efeito:
+As tolerations que mantêm os pods vivos na desconexão. O manifesto abaixo revela
+o mecanismo, não só o efeito:
 
 ```yaml
 tolerations:
@@ -261,7 +259,7 @@ SIM - o kubelet gerencia `restartPolicy` localmente, sem API server, DESDE QUE
 a imagem esteja no cache local do containerd.
 
 O restart e SUB-SEGUNDO (imagem em cache), entao um curl no VIP nao pega o blip
-- com 2 replicas nem cai. A forma de MOSTRAR na tela e pelo restart count do
+- com 2 replicas nem cai. A forma de visualizar na tela é pelo restart count do
 container (coluna ATTEMPT do crictl), em dois terminais no node.
 
 Pre-requisito: `crictl` instalado no node (uma vez):
@@ -286,11 +284,11 @@ ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51
 sudo crictl stop $(sudo crictl ps --name podinfo -q | head -1)
 ```
 
-> No Terminal A o cliente ve o container ir para Exited e, em ~2-5s, um novo
-> container Running com ATTEMPT +1 - o kubelet reiniciou da imagem em cache, sem
-> falar com a AWS. Se repetir o kill varias vezes, o backoff exponencial
-> (10s->20s->40s) atrasa o retorno - isso tambem e um bom ponto: o Kubernetes
-> aplica crash-loop backoff localmente, mesmo offline. Para a demo, faca 1 kill.
+> No Terminal A o container vai para Exited e, em ~2-5s, sobe um novo container
+> Running com ATTEMPT +1 - o kubelet reiniciou da imagem em cache, sem falar com a
+> AWS. Se o kill se repetir várias vezes, o backoff exponencial (10s->20s->40s)
+> atrasa o retorno: o Kubernetes aplica crash-loop backoff localmente, mesmo
+> offline. Faça 1 kill apenas.
 
 > O kubelet é autônomo para reiniciar containers - restartPolicy funciona sem control plane. O requisito é a IMAGEM estar no cache local do containerd. Por isso duas configurações são obrigatórias em produção: pre-pull das imagens críticas em todos os nodes, e GC do containerd configurado para não descartar imagens (discard_unpacked_layers=false). Sem isso, um crash durante desconexão vira indisponibilidade - o node não consegue puxar do ECR.
 
@@ -399,7 +397,7 @@ kubectl get pods -n demo-stone -l app=burst-app -o wide \
 os cloud nodes da AWS. O overflow é automático - `preferred` affinity, não
 `required`: o scheduler prefere on-prem, mas usa a nuvem quando o DC enche.
 
-> Sua plataforma serve a carga normal no datacenter, com o custo e a latência do hardware que vocês já têm. Quando chega um pico - Black Friday, campanha - a capacidade transborda para a AWS automaticamente, sem reconfigurar nada. É elasticidade sob demanda mantendo o baseline no DC.
+> Na prática: a carga normal roda no datacenter, com o custo e a latência do hardware já existente. Num pico - Black Friday, campanha - a capacidade transborda para a AWS automaticamente, sem reconfigurar nada. Elasticidade sob demanda mantendo o baseline no DC.
 
 > Dica k9s: em `:pods` filtrado em `demo-stone`, pressione `w` para exibir a coluna NODE. Ao escalar o burst-app, veja os pods nascendo e se espalhando: a maioria nos hybrid nodes e o excedente nos cloud nodes. Bursting visível pod a pod.
 
@@ -409,9 +407,9 @@ os cloud nodes da AWS. O overflow é automático - `preferred` affinity, não
 kubectl scale deploy burst-app -n demo-stone --replicas=2
 ```
 
-> Nuance importante (seja transparente): o scale-down remove pods mas NÃO move os sobreviventes de volta - a affinity só age no scheduling. Para consolidar ativamente no DC use `kubectl rollout restart deploy/burst-app` (recria os pods, que voltam pro hybrid por preferência) ou o Descheduler em produção. Validado: pós rollout restart, 100% de volta ao hybrid.
+> Nuance importante: o scale-down remove pods mas NÃO move os sobreviventes de volta - a affinity só age no scheduling. Para consolidar ativamente no DC use `kubectl rollout restart deploy/burst-app` (recria os pods, que voltam pro hybrid por preferência) ou o Descheduler em produção. Validado: pós rollout restart, 100% de volta ao hybrid.
 
-### Evolução em produção (mencionar, não demonstrar)
+### Evolução em produção
 
 Este demo usa cloud nodes já existentes (overflow). Em produção, para provisionar
 capacidade cloud SOB DEMANDA e destruir depois: **Karpenter + Spot** disparado
@@ -437,9 +435,10 @@ O dashboard mostra:
 - Conectividade On-Prem para Nuvem (probe ICMP ao VPC): CONECTADO / DESCONECTADO
 - Hybrid Nodes UP (monitorados localmente pelo Prometheus on-prem)
 - CPU e memória por hybrid node
+- Nodes da Nuvem alcançáveis do on-prem (um tile por node, verde OK / vermelho INALCANÇÁVEL)
 
-> Durante a Fase 3 (FIS ativo), o painel "Conectividade On-Prem para Nuvem" muda
-> para DESCONECTADO (vermelho), enquanto os hybrid nodes seguem UP e o Grafana
+> Durante a Fase 3, o painel "Conectividade On-Prem para Nuvem" e os tiles de
+> "Nodes da Nuvem" ficam vermelhos, enquanto os hybrid nodes seguem UP e o Grafana
 > continua respondendo - porque o stack inteiro roda on-prem. É a prova de que o
 > DC mantém observabilidade própria mesmo cego para a AWS. Deixe este dashboard
 > aberto desde o início, ao lado das URLs do podinfo.
