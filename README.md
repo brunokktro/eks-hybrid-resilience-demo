@@ -2,6 +2,8 @@
 
 > Hands-on demonstration of workload resilience on EKS Hybrid Nodes during network disconnection scenarios between AWS and on-premises environments.
 
+> 📖 **Step-by-step hands-on lab (hosted):** **https://brunokktro.github.io/eks-hybrid-resilience/** — the full runbook as a Workshop Studio-style page (collapsible tips, copy-paste commands, architecture diagram). Part of the [Hands-On Labs](https://brunokktro.github.io/) on the toolkit.
+
 ## Overview
 
 This demo validates that workloads running on **EKS Hybrid Nodes** (on-premises) continue operating during network connectivity loss with the AWS region, using:
@@ -516,9 +518,11 @@ chmod +x scripts/demo-live.sh
 
 ## Execution Guide (Step-by-Step for Live Demo)
 
-> This section documents exactly what happens during the demo, with commentary
-> for presenting to the customer. The interactive script (`scripts/demo-live.sh`)
-> automates these steps with pauses for explanation.
+> **Canonical step-by-step:** the live runbook is [`docs/02-demo-runbook.md`](docs/02-demo-runbook.md),
+> also published as a hosted hands-on lab: **https://brunokktro.github.io/eks-hybrid-resilience/**.
+> The section below is a reference summary. Present from the runbook / hosted lab (it reads like a
+> Workshop Studio module, self-explanatory). `scripts/demo-live.sh` is a validator/tester only -
+> never shown to the customer.
 
 ### Phase 1: Show Current State (5 min)
 
