@@ -65,9 +65,10 @@ kubectl config current-context
 > HTML do runbook na esquerda, iTerm2 na direita; na Fase 3, divida o terminal
 > em 3 panes para os 3 clients lado a lado.
 
-> Nota sobre sudo no node: os comandos com `sudo` (crictl, iptables) pedem a
-> senha do usuário lopbruno ao logar interativo. Digite a senha quando pedir.
-> Para fluir sem prompt na demo, opcionalmente configure NOPASSWD no node:
+> Nota sobre sudo no node: os hybrid nodes já estão com **NOPASSWD** configurado
+> para `crictl` e `iptables` (`/etc/sudoers.d/demo`), então os comandos com `sudo`
+> nas Fases 2b, 3b e 3-cache rodam sem pedir senha - fluxo limpo na frente do
+> cliente. Se precisar reaplicar num node novo:
 > `echo "lopbruno ALL=(ALL) NOPASSWD: /usr/local/bin/crictl, /usr/sbin/iptables" | sudo tee /etc/sudoers.d/demo`
 
 ## Fase 1: Estado atual (5 min)
