@@ -43,3 +43,6 @@ code{background:#2a2a2a;color:#e8d5a3;padding:2px 6px;border-radius:4px;font-siz
 .content img{cursor:zoom-in}
 .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:1000;display:flex;align-items:center;justify-content:center;cursor:zoom-out;padding:24px}
 .lightbox img{max-width:96vw;max-height:96vh;width:auto;height:auto;border-radius:6px;box-shadow:0 8px 40px rgba(0,0,0,.5);background:#fff}
+.content table{font-size:.86rem;border-collapse:collapse}
+.content th,.content td{padding:6px 10px;line-height:1.35}
+.content td code{font-size:.82rem;padding:1px 5px}

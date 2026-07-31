@@ -53,8 +53,8 @@ kubectl config current-context
 | Recurso | Endereço | Uso |
 |---------|----------|-----|
 | App via ALB (região AWS) | `kubectl get ingress demo-ingress -n demo-stone -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'` | Ingress region-originated - cai no disconnect |
-| App via VIP on-prem (MetalLB) | http://192.168.3.240/ | Entrada local - sobrevive ao disconnect |
-| Grafana on-prem | http://192.168.3.242/ | Dashboard de saúde dos nodes + conectividade com a nuvem (anônimo) |
+| App via VIP on-prem (MetalLB) | [http://192.168.3.240/](http://192.168.3.240/) | Entrada local - sobrevive ao disconnect |
+| Grafana on-prem | [http://192.168.3.242/](http://192.168.3.242/) | Dashboard de saúde dos nodes + conectividade com a nuvem (anônimo) |
 | SSH Node 1 / Node 2 | `ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51` / `...52` | Comandos no node (crictl, iptables) |
 | Cluster EKS | `aws eks update-kubeconfig --name llm-vmware-hybrid --region sa-east-1` | kubectl |
 
