@@ -108,6 +108,21 @@ data:
           - {source_labels: [__address__], target_label: __param_target}
           - {source_labels: [__param_target], target_label: instance}
           - {target_label: __address__, replacement: blackbox-exporter.onprem-monitoring:9115}
+      # Nodes da nuvem vistos DO on-prem (blackbox ICMP). Caem no disconnect.
+      - job_name: 'cloud-nodes'
+        metrics_path: /probe
+        params: {module: [icmp]}
+        static_configs:
+          - targets:
+              - 10.43.19.112
+              - 10.43.22.159
+              - 10.43.56.53
+              - 10.43.59.171
+            labels: {group: cloud-nodes}
+        relabel_configs:
+          - {source_labels: [__address__], target_label: __param_target}
+          - {source_labels: [__param_target], target_label: instance}
+          - {target_label: __address__, replacement: blackbox-exporter.onprem-monitoring:9115}
       - job_name: 'prometheus'
         static_configs:
           - targets: ['localhost:9090']
@@ -203,6 +218,8 @@ spec:
             - {name: GF_SECURITY_ADMIN_PASSWORD, value: "hybrid-demo"}
             - {name: GF_AUTH_ANONYMOUS_ENABLED, value: "true"}
             - {name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: "Viewer"}
+            # Home dashboard permanente (sobrevive a restart do pod)
+            - {name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH, value: "/var/lib/grafana/dashboards/onprem.json"}
           ports: [{containerPort: 3000}]
           volumeMounts:
             - {name: ds, mountPath: /etc/grafana/provisioning/datasources}
@@ -243,4 +260,4 @@ data:
         options:
           path: /var/lib/grafana/dashboards
   onprem.json: |
-    {"title": "On-Prem: Saude dos Nodes + Conectividade com a Nuvem", "uid": "onprem-hybrid", "schemaVersion": 39, "version": 1, "time": {"from": "now-15m", "to": "now"}, "refresh": "5s", "panels": [{"id": 1, "title": "Conectividade On-Prem -> Nuvem (AWS VPC)", "type": "stat", "gridPos": {"h": 6, "w": 8, "x": 0, "y": 0}, "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "DESCONECTADO", "color": "red"}, "1": {"text": "CONECTADO", "color": "green"}}}]}}, "targets": [{"expr": "probe_success{probe=\"aws-vpc-cloud-node\"}", "refId": "A"}]}, {"id": 2, "title": "Hybrid Nodes UP (monitorados localmente)", "type": "stat", "gridPos": {"h": 6, "w": 8, "x": 8, "y": 0}, "targets": [{"expr": "count(up{job=\"hybrid-nodes\"}==1)", "refId": "A"}]}, {"id": 3, "title": "Latencia do probe para a nuvem (s)", "type": "timeseries", "gridPos": {"h": 6, "w": 8, "x": 16, "y": 0}, "targets": [{"expr": "probe_duration_seconds{probe=\"aws-vpc-cloud-node\"}", "refId": "A"}]}, {"id": 4, "title": "CPU por hybrid node (%)", "type": "timeseries", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6}, "targets": [{"expr": "100 - (avg by(instance)(rate(node_cpu_seconds_total{mode=\"idle\",job=\"hybrid-nodes\"}[2m]))*100)", "refId": "A", "legendFormat": "{{instance}}"}]}, {"id": 5, "title": "Memoria disponivel por hybrid node (%)", "type": "timeseries", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6}, "targets": [{"expr": "node_memory_MemAvailable_bytes{job=\"hybrid-nodes\"}/node_memory_MemTotal_bytes{job=\"hybrid-nodes\"}*100", "refId": "A", "legendFormat": "{{instance}}"}]}]}
+    {"title": "On-Prem: Saude dos Nodes + Conectividade com a Nuvem", "uid": "onprem-hybrid", "schemaVersion": 39, "version": 2, "time": {"from": "now-15m", "to": "now"}, "refresh": "5s", "panels": [{"id": 1, "title": "Conectividade On-Prem -> Nuvem (AWS VPC)", "type": "stat", "gridPos": {"h": 6, "w": 8, "x": 0, "y": 0}, "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "DESCONECTADO", "color": "red"}, "1": {"text": "CONECTADO", "color": "green"}}}]}}, "targets": [{"expr": "probe_success{probe=\"aws-vpc-cloud-node\"}", "refId": "A"}]}, {"id": 2, "title": "Hybrid Nodes UP (monitorados localmente)", "type": "stat", "gridPos": {"h": 6, "w": 8, "x": 8, "y": 0}, "targets": [{"expr": "count(up{job=\"hybrid-nodes\"}==1)", "refId": "A"}]}, {"id": 3, "title": "Latencia do probe para a nuvem (s)", "type": "timeseries", "gridPos": {"h": 6, "w": 8, "x": 16, "y": 0}, "targets": [{"expr": "probe_duration_seconds{probe=\"aws-vpc-cloud-node\"}", "refId": "A"}]}, {"id": 4, "title": "CPU por hybrid node (%)", "type": "timeseries", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6}, "targets": [{"expr": "100 - (avg by(instance)(rate(node_cpu_seconds_total{mode=\"idle\",job=\"hybrid-nodes\"}[2m]))*100)", "refId": "A", "legendFormat": "{{instance}}"}]}, {"id": 5, "title": "Memoria disponivel por hybrid node (%)", "type": "timeseries", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6}, "targets": [{"expr": "node_memory_MemAvailable_bytes{job=\"hybrid-nodes\"}/node_memory_MemTotal_bytes{job=\"hybrid-nodes\"}*100", "refId": "A", "legendFormat": "{{instance}}"}]}, {"id": 6, "title": "Nodes da Nuvem - alcancaveis do On-Prem (caem no disconnect)", "type": "stat", "gridPos": {"h": 6, "w": 24, "x": 0, "y": 14}, "options": {"colorMode": "background", "textMode": "value_and_name"}, "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "INALCANCAVEL", "color": "red"}, "1": {"text": "OK", "color": "green"}}}]}}, "targets": [{"expr": "probe_success{group=\"cloud-nodes\"}", "refId": "A", "legendFormat": "{{instance}}"}]}]}
