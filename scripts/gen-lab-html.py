@@ -155,6 +155,16 @@ tpl = f'''<!DOCTYPE html>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script>
 hljs.highlightAll();
+// Lightbox: clique na imagem para ampliar em tamanho original
+document.querySelectorAll('.content img').forEach(function(img){{
+  img.addEventListener('click', function(){{
+    var ov=document.createElement('div');ov.className='lightbox';
+    var full=document.createElement('img');full.src=img.src;
+    ov.appendChild(full);document.body.appendChild(ov);
+    ov.addEventListener('click', function(){{ov.remove();}});
+  }});
+}});
+
 document.querySelectorAll('pre').forEach(function(pre){{
   var btn=document.createElement('button');btn.className='copy-btn';btn.textContent='Copy';
   btn.onclick=function(){{navigator.clipboard.writeText(pre.querySelector('code').textContent);btn.textContent='Copied!';setTimeout(function(){{btn.textContent='Copy'}},1500);}};
