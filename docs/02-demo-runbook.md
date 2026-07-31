@@ -339,32 +339,6 @@ kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
 kubectl scale deploy server-hybrid-1 -n demo-stone --replicas=2
 ```
 
-## Trade-off das Tolerations
-
-A demo usa `tolerationSeconds: 3600` (1h). **Não existe valor universal** - o
-mesmo mecanismo que protege na desconexão ATRASA a recuperação numa falha real
-de node (o control plane não distingue "rede caiu" de "node morreu").
-
-| Perfil da app | tolerationSeconds sugerido |
-|---------------|----------------------------|
-| Stateless com réplicas em vários nodes | 300-900 (failover rápido importa mais) |
-| Stateful singleton | Longo/indefinido (evita split-brain) |
-| DC-crítica ("se a AWS cair") | Longo + réplicas em múltiplos nodes |
-
-**Insight:** com zone labels (`topology.kubernetes.io/zone` por DC), o Kubernetes
-CANCELA evictions quando a zona inteira fica unreachable - o cenário "AWS caiu"
-já fica protegido por design.
-
-## Limitações conhecidas
-
-| Limitação | Mitigação |
-|-----------|-----------|
-| Control plane na região (sem scheduling na desconexão) | Pré-dimensionar réplicas |
-| SSM credentials: 1h / IAM Roles Anywhere: até 12h | Usar IRA com durationSeconds alto |
-| Cilium pode reiniciar na desconexão (BGP) | v1.17+ tem o fix; usar VXLAN (nosso caso) |
-| Restart de node offline: pods não voltam | Réplicas multi-node (Cenário 4) |
-| ALB region-originated cai na desconexão | LB local (MetalLB/F5) para tráfego do DC |
-
 ## Fase 6: Cloud Bursting - overflow do DC para a AWS (10 min)
 
 Cenário complementar (não é resiliência, é elasticidade): a app da plataforma
@@ -416,6 +390,32 @@ capacidade cloud SOB DEMANDA e destruir depois: **Karpenter + Spot** disparado
 por **KEDA/Prometheus** monitorando a carga local. É a mesma estratégia do
 sample oficial aws-samples/sample-eks-hybrid-nodes-gpu-burst-scaling, aplicável
 a workloads web (não só LLM). Pode ser uma demo dedicada.
+
+## Trade-off das Tolerations
+
+A demo usa `tolerationSeconds: 3600` (1h). **Não existe valor universal** - o
+mesmo mecanismo que protege na desconexão ATRASA a recuperação numa falha real
+de node (o control plane não distingue "rede caiu" de "node morreu").
+
+| Perfil da app | tolerationSeconds sugerido |
+|---------------|----------------------------|
+| Stateless com réplicas em vários nodes | 300-900 (failover rápido importa mais) |
+| Stateful singleton | Longo/indefinido (evita split-brain) |
+| DC-crítica ("se a AWS cair") | Longo + réplicas em múltiplos nodes |
+
+**Insight:** com zone labels (`topology.kubernetes.io/zone` por DC), o Kubernetes
+CANCELA evictions quando a zona inteira fica unreachable - o cenário "AWS caiu"
+já fica protegido por design.
+
+## Limitações conhecidas
+
+| Limitação | Mitigação |
+|-----------|-----------|
+| Control plane na região (sem scheduling na desconexão) | Pré-dimensionar réplicas |
+| SSM credentials: 1h / IAM Roles Anywhere: até 12h | Usar IRA com durationSeconds alto |
+| Cilium pode reiniciar na desconexão (BGP) | v1.17+ tem o fix; usar VXLAN (nosso caso) |
+| Restart de node offline: pods não voltam | Réplicas multi-node (Cenário 4) |
+| ALB region-originated cai na desconexão | LB local (MetalLB/F5) para tráfego do DC |
 
 ## Fase 7: Observabilidade on-premises (5 min)
 
