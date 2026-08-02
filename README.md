@@ -525,7 +525,7 @@ The full step-by-step is maintained in a single place - present from there, neve
 
 `scripts/demo-live.sh` is a validator/tester to confirm the environment before the demo (never shown to the customer). `scripts/99-cleanup.sh` resets it afterward.
 
-**Phases, in order:** Fase 0 (environment prep) - Fase 1 (current state) - Fase 2 (LB happy path) - Fase 3 (steady-state disconnection + NotReady/tolerations) - Fase 3-cache (pod crash / image cache) - Fase 4 (disconnection during provisioning) - Fase 4b (DNS resiliency, the hidden dependency) - Fase 5 (recovery) - Fase 6 (cloud bursting) - Trade-off das Tolerations - Limitações conhecidas - Fase 7 (on-prem observability) - F.A.Q.
+**Phases, in order:** Fase 0 (environment prep) - Fase 1 (current state) - Fase 2 (LB happy path) - Fase 3 (steady-state disconnection + NotReady/tolerations) - Fase 3-cache (pod crash / image cache) - Fase 4 (disconnection during provisioning) - Fase 4b (DNS resiliency, the hidden dependency) - Fase 5 (recovery) - Fase 6 (cloud bursting) - Fase 7 (on-prem observability) - Trade-off das Tolerations - Limitações conhecidas - F.A.Q.
 
 ## Key Concepts: Tolerations
 

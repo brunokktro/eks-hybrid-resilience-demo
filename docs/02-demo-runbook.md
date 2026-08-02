@@ -541,6 +541,32 @@ por **KEDA/Prometheus** monitorando a carga local. É a mesma estratégia do
 sample oficial aws-samples/sample-eks-hybrid-nodes-gpu-burst-scaling, aplicável
 a workloads web (não só LLM). Pode ser uma demo dedicada.
 
+## Fase 7: Observabilidade on-premises (5 min)
+
+Monitoring "à moda antiga" rodando 100% NOS hybrid nodes (Prometheus + Grafana +
+blackbox), independente da nuvem. Cobre a visibilidade que o Container Insights
+(cloud-side) não dá: a visão DO ON-PREM enxergando a nuvem, e que SOBREVIVE à
+desconexão porque roda localmente.
+
+Abra o Grafana on-prem (acesso anônimo, dashboard já provisionado):
+
+```bash
+# VIP on-prem do Grafana - abrir no browser
+echo "http://192.168.3.242/  (dashboard: On-Prem - Saude dos Nodes + Conectividade com a Nuvem)"
+```
+
+O dashboard mostra:
+- Conectividade On-Prem para Nuvem (probe ICMP ao VPC): CONECTADO / DESCONECTADO
+- Hybrid Nodes UP (monitorados localmente pelo Prometheus on-prem)
+- CPU e memória por hybrid node
+- Nodes da Nuvem alcançáveis do on-prem (um tile por node, verde OK / vermelho INALCANÇÁVEL)
+
+> Durante a Fase 3, o painel "Conectividade On-Prem para Nuvem" e os tiles de
+> "Nodes da Nuvem" ficam vermelhos, enquanto os hybrid nodes seguem UP e o Grafana
+> continua respondendo - porque o stack inteiro roda on-prem. É a prova de que o
+> DC mantém observabilidade própria mesmo cego para a AWS. Deixe este dashboard
+> aberto desde o início, ao lado das URLs do podinfo.
+
 ## Trade-off das Tolerations
 
 A demo usa `tolerationSeconds: 3600` (1h). **Não existe valor universal** - o
@@ -567,32 +593,6 @@ já fica protegido por design.
 | Restart de node offline: pods não voltam | Réplicas multi-node (Cenário 4) |
 | ALB region-originated cai na desconexão | LB local (MetalLB/F5) para tráfego do DC |
 | CoreDNS default fica só na nuvem (DNS morre no disconnect) | Réplicas on-prem via topologySpread (Fase 4b - DNS Resiliency) |
-
-## Fase 7: Observabilidade on-premises (5 min)
-
-Monitoring "à moda antiga" rodando 100% NOS hybrid nodes (Prometheus + Grafana +
-blackbox), independente da nuvem. Cobre a visibilidade que o Container Insights
-(cloud-side) não dá: a visão DO ON-PREM enxergando a nuvem, e que SOBREVIVE à
-desconexão porque roda localmente.
-
-Abra o Grafana on-prem (acesso anônimo, dashboard já provisionado):
-
-```bash
-# VIP on-prem do Grafana - abrir no browser
-echo "http://192.168.3.242/  (dashboard: On-Prem - Saude dos Nodes + Conectividade com a Nuvem)"
-```
-
-O dashboard mostra:
-- Conectividade On-Prem para Nuvem (probe ICMP ao VPC): CONECTADO / DESCONECTADO
-- Hybrid Nodes UP (monitorados localmente pelo Prometheus on-prem)
-- CPU e memória por hybrid node
-- Nodes da Nuvem alcançáveis do on-prem (um tile por node, verde OK / vermelho INALCANÇÁVEL)
-
-> Durante a Fase 3, o painel "Conectividade On-Prem para Nuvem" e os tiles de
-> "Nodes da Nuvem" ficam vermelhos, enquanto os hybrid nodes seguem UP e o Grafana
-> continua respondendo - porque o stack inteiro roda on-prem. É a prova de que o
-> DC mantém observabilidade própria mesmo cego para a AWS. Deixe este dashboard
-> aberto desde o início, ao lado das URLs do podinfo.
 
 ## F.A.Q
 
