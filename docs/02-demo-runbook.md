@@ -261,25 +261,27 @@ export EKS_EP_IPS=$(dig +short $(aws eks describe-cluster --name llm-vmware-hybr
 echo "IPs do endpoint: $EKS_EP_IPS"
 ```
 
-Criar as regras de bloqueio, um node por vez. O loop roda NO node (o bash do node
-faz o split dos IPs) - assim funciona igual no seu shell local, seja zsh ou bash:
+Criar as regras de bloqueio nos dois nodes de uma vez. O loop externo percorre os
+nodes (literais, seguro no zsh) e o loop dos IPs roda NO node (o bash do node faz
+o split), então funciona igual seja o seu shell zsh ou bash:
 
 ```bash
-ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51 \
-  "for ip in $EKS_EP_IPS; do sudo iptables -I OUTPUT -d \$ip -j DROP; done"
+for node in 192.168.3.51 192.168.3.52; do
+  ssh -i ~/.ssh/id_ecdsa lopbruno@$node "for ip in $EKS_EP_IPS; do sudo iptables -I OUTPUT -d \$ip -j DROP; done"
+done
 ```
 
-```bash
-ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.52 \
-  "for ip in $EKS_EP_IPS; do sudo iptables -I OUTPUT -d \$ip -j DROP; done"
-```
-
-> Dica: os dois nodes de uma vez (loop externo sobre os nodes literais - seguro no zsh, o split dos IPs acontece no node):
+> Dica: alternativa - logar em cada node e criar as regras por dentro. Logue no node:
 >
 > ```bash
-> for node in 192.168.3.51 192.168.3.52; do
->   ssh -i ~/.ssh/id_ecdsa lopbruno@$node "for ip in $EKS_EP_IPS; do sudo iptables -I OUTPUT -d \$ip -j DROP; done"
-> done
+> ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51
+> ```
+>
+> Já no node, criar as regras (use os IPs que o resolve retornou; repita no .52):
+>
+> ```bash
+> sudo iptables -I OUTPUT -d 18.229.16.130 -j DROP
+> sudo iptables -I OUTPUT -d 18.229.34.27 -j DROP
 > ```
 
 Acompanhar os dois virarem NotReady:
@@ -477,25 +479,26 @@ Parar o FIS (ou aguardar o auto-revert - o template tem duração de 1h):
 aws fis stop-experiment --id ${EXPERIMENT_ID} --region sa-east-1
 ```
 
-Remover as regras de iptables, um node por vez (par simétrico do bloqueio da Fase
-3b, mesma variável `EKS_EP_IPS`, loop rodando no node):
+Remover as regras de iptables nos dois nodes de uma vez (par simétrico do bloqueio
+da Fase 3b, mesma variável `EKS_EP_IPS`, loop rodando no node):
 
 ```bash
-ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51 \
-  "for ip in $EKS_EP_IPS; do sudo iptables -D OUTPUT -d \$ip -j DROP; done"
+for node in 192.168.3.51 192.168.3.52; do
+  ssh -i ~/.ssh/id_ecdsa lopbruno@$node "for ip in $EKS_EP_IPS; do sudo iptables -D OUTPUT -d \$ip -j DROP; done"
+done
 ```
 
-```bash
-ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.52 \
-  "for ip in $EKS_EP_IPS; do sudo iptables -D OUTPUT -d \$ip -j DROP; done"
-```
-
-> Dica: os dois nodes de uma vez (mesma lógica do bloqueio, com `-D`):
+> Dica: alternativa - logar em cada node e remover por dentro. Logue no node:
 >
 > ```bash
-> for node in 192.168.3.51 192.168.3.52; do
->   ssh -i ~/.ssh/id_ecdsa lopbruno@$node "for ip in $EKS_EP_IPS; do sudo iptables -D OUTPUT -d \$ip -j DROP; done"
-> done
+> ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51
+> ```
+>
+> Já no node, remover as regras (use os IPs do resolve; repita no .52):
+>
+> ```bash
+> sudo iptables -D OUTPUT -d 18.229.16.130 -j DROP
+> sudo iptables -D OUTPUT -d 18.229.34.27 -j DROP
 > ```
 
 Conferir que não sobrou regra (deve retornar 0 nos dois nodes):
