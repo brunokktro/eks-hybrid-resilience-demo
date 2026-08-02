@@ -93,13 +93,16 @@ def render_body(mdbody):
             text = next((c for k, _, c in segs if k == 'text'), '')
             # choose callout type + summary label from leading keyword
             low = text.lower()
-            if low.startswith(('dica', 'tip')): ctype, label = 'success', 'Dica'
+            is_open = False
+            if low.startswith(('atenção', 'atencao', 'importante', 'crítico', 'critico', 'aviso')):
+                ctype, label, is_open = 'warn', 'Atenção', True
+            elif low.startswith(('dica', 'tip')): ctype, label = 'success', 'Dica'
             elif low.startswith(('nota', 'resultado esperado', 'nuance', 'comportamento', 'requisito')): ctype, label = 'warn', 'Nota'
             elif low.startswith(('pré-requisito','pre-requisito','ferramentas')): ctype, label = 'info', 'Setup'
             elif low.startswith(('referência','referencia','fix já aplicado','fix ja aplicado')): ctype, label = 'info', 'Referência'
             else: ctype, label = 'info', 'Detalhe'
             # summary = first 60 chars
-            summ = re.sub(r'^(dica|tip|nota|detalhe|referência|referencia)[:\s-]*', '', text, flags=re.I)
+            summ = re.sub(r'^(dica|tip|nota|detalhe|referência|referencia|atenção|atencao|importante|crítico|critico|aviso)[:\s-]*', '', text, flags=re.I)
             summ_short = (summ[:70] + '...') if len(summ) > 73 else summ
             body = ''
             for k, lang2, c in segs:
@@ -107,7 +110,8 @@ def render_body(mdbody):
                 elif k == 'code':
                     cls2 = f' class="language-{lang2}"' if lang2 else ''
                     body += f'<pre><code{cls2}>{esc(c)}</code></pre>'
-            out.append(f'<details class="callout callout-{ctype}"><summary>{label}: {inline(summ_short)}</summary><div>{body}</div></details>')
+            open_attr = ' open' if is_open else ''
+            out.append(f'<details class="callout callout-{ctype}"{open_attr}><summary>{label}: {inline(summ_short)}</summary><div>{body}</div></details>')
             continue
         # table
         if line.startswith('|') and j+1 < len(blk) and re.match(r'^\|[-:\s|]+\|', blk[j+1]):

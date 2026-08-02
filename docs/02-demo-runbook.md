@@ -411,32 +411,31 @@ dele não resolve. O monitoring "local" tinha uma dependência escondida da nuve
 > sobreviver ao disconnect, mas a camada mais básica - resolução de nomes - ainda
 > morava na nuvem.
 
-### O fix: réplicas de CoreDNS on-prem (recomendação oficial)
+### O fix: NodeLocal DNSCache + réplicas de CoreDNS on-prem
 
-Para clusters mixed-mode, a AWS recomenda pelo menos uma réplica de CoreDNS nos
-hybrid nodes e uma nos nodes da nuvem. Neste ambiente o fix JÁ está aplicado na
-preparação - ele não pode ser aplicado durante a desconexão, porque o scheduler
-não consegue colocar novas réplicas em nodes NotReady.
+> Atenção: DNS resiliente em hybrid nodes exige NodeLocal DNSCache, aplicado na PREPARAÇÃO (antes de qualquer desconexão). Só réplica de CoreDNS on-prem NÃO basta, e o fix NÃO pode ser aplicado durante a desconexão.
+>
+> Dois motivos, aprendidos na prática:
+>
+> 1. Sem NodeLocal, o pod consulta o CoreDNS pelo ClusterIP (round-robin entre todas as réplicas). Em cluster pequeno/assimétrico, o Topology Aware Routing quase nunca popula os hints, então parte das queries cai no CoreDNS da nuvem - inalcançável no disconnect - e a resolução falha de forma intermitente. Réplica on-prem sozinha não garante que a query vá para ela.
+> 2. Durante a desconexão o Cilium do node não atualiza rotas/serviços (sem API server), então mudar `internalTrafficPolicy`/`trafficDistribution` ao vivo não tem efeito. Tudo tem que estar pronto ANTES.
+>
+> NodeLocal DNSCache resolve porque roda um cache em CADA node (o pod consulta `169.254.20.10`, local), com `serve_stale` - nomes já resolvidos (ex: o Grafana consultando o Prometheus a cada poll) continuam resolvendo do cache local mesmo com a nuvem inalcançável. Manifesto aplicado no prep (Parte 1), validado no ciclo disconnect -> resolução local -> recovery.
 
-> Referência - fix já aplicado no prep (não reaplicar aqui; comandos para reproduzir em outro ambiente):
+Complementarmente, mantenha réplicas de CoreDNS distribuídas (recomendação AWS para mixed-mode: ao menos uma on-prem e uma na nuvem) - é a base, mas não substitui o NodeLocal.
+
+> Referência - baseline de CoreDNS aplicado no prep (não reaplicar aqui):
 >
 > ```bash
 > kubectl -n kube-system patch deploy coredns --type merge -p '{"spec":{"replicas":3,"template":{"spec":{"topologySpreadConstraints":[{"maxSkew":1,"topologyKey":"topology.kubernetes.io/zone","whenUnsatisfiable":"DoNotSchedule","labelSelector":{"matchLabels":{"k8s-app":"kube-dns"}}}]}}}}'
-> kubectl -n kube-system annotate svc kube-dns service.kubernetes.io/topology-mode=Auto --overwrite
 > ```
 
-Confirmar a distribuição (deve haver réplica em node `mi-*`):
+Confirmar a distribuição (deve haver réplica em node `mi-*`) e o NodeLocal em todos os nodes:
 
 ```bash
 kubectl get pods -n kube-system -l k8s-app=kube-dns -o custom-columns='POD:.metadata.name,NODE:.spec.nodeName'
+kubectl get pods -n kube-system -l k8s-app=node-local-dns -o wide
 ```
-
-> A annotation `topology-mode: Auto` habilita Topology Aware Routing: quando ativa,
-> os nodes preferem endpoints de DNS da própria zona (hybrid consulta a réplica
-> local). Em clusters pequenos os hints podem não ativar (heurística de número
-> mínimo de endpoints) - as réplicas locais continuam valendo, com retry do
-> resolver. O CoreDNS local serve do cache de informer mesmo sem alcançar o API
-> server - nomes existentes continuam resolvendo offline.
 
 ### Testar durante a desconexão
 
@@ -628,7 +627,7 @@ já fica protegido por design.
 | Cilium pode reiniciar na desconexão (BGP) | v1.17+ tem o fix; usar VXLAN (nosso caso) |
 | Restart de node offline: pods não voltam | Réplicas multi-node (Cenário 4) |
 | ALB region-originated cai na desconexão | LB local (MetalLB/F5) para tráfego do DC |
-| CoreDNS default fica só na nuvem (DNS morre no disconnect) | Réplicas on-prem via topologySpread (Fase 4b - DNS Resiliency) |
+| CoreDNS default fica só na nuvem (DNS morre no disconnect) | NodeLocal DNSCache + réplicas CoreDNS on-prem, aplicados no prep (Fase 4b) |
 
 ## F.A.Q
 
@@ -685,7 +684,7 @@ Demonstrado na **Fase 6** (overflow) e evoluível para **Karpenter + Spot** disp
 
 Vira, se o CoreDNS rodar só na nuvem - foi um achado deste lab (Fase 4b - DNS Resiliency):
 
-- **Nomes internos** (`*.svc.cluster.local`): exigem CoreDNS. Fix: **réplica on-prem** via `topologySpreadConstraints` (recomendação oficial para mixed-mode)
+- **Nomes internos** (`*.svc.cluster.local`): exigem CoreDNS. Fix: **NodeLocal DNSCache** (cache por node, aplicado no prep) + réplica de CoreDNS on-prem. Só a réplica on-prem não basta - os topology hints raramente ativam em cluster pequeno, e o round-robin ainda cai no CoreDNS da nuvem
 - **Nomes públicos**: o data plane do Route 53 é **global** (SLA 100%) - mas se o DC resolve via **Resolver endpoint na VPC** (regional, via link privado), o caminho morre com o disconnect. Resolver local no DC para nomes públicos
 - O CoreDNS local serve do cache mesmo sem API server - nomes existentes resolvem offline
 
