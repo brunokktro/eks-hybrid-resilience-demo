@@ -419,7 +419,7 @@ dele não resolve. O monitoring "local" tinha uma dependência escondida da nuve
 
 ### O fix (validado 8/8): CoreDNS em cada node + internalTrafficPolicy Local
 
-> Atenção: o fix tem DOIS componentes e AMBOS têm que estar aplicados na PREPARAÇÃO (antes de qualquer desconexão). Não dá para aplicar durante o disconnect - o Cilium do node não atualiza rotas/serviços sem o API server.
+> Nota: o fix tem DOIS componentes e AMBOS têm que estar aplicados na PREPARAÇÃO (antes de qualquer desconexão). Não dá para aplicar durante o disconnect - o Cilium do node não atualiza rotas/serviços sem o API server.
 >
 > 1. CoreDNS rodando em CADA node (inclusive os dois hybrid), 1/1 Ready.
 > 2. `internalTrafficPolicy: Local` no service kube-dns. ESTE É O PONTO CRÍTICO: sem ele, o pod consulta o CoreDNS pelo ClusterIP em round-robin entre TODAS as réplicas, e parte das queries cai no CoreDNS da nuvem (inalcançável no disconnect) - falha intermitente. Com `Local`, cada pod resolve SÓ pelo CoreDNS do próprio node. Medido: sem o fix ~1/3 de falha; com o fix 8/8 durante o disconnect.
