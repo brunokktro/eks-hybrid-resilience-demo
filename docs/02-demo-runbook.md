@@ -257,19 +257,21 @@ Resolver os IPs do endpoint e guardar na variável (mudam - sempre re-resolver).
 
 ```bash
 export EKS_EP_IPS=$(dig +short $(aws eks describe-cluster --name llm-vmware-hybrid \
-  --region sa-east-1 --query 'cluster.endpoint' --output text | sed 's|https://||') | grep -E '^[0-9]')
+  --region sa-east-1 --query 'cluster.endpoint' --output text | sed 's|https://||') | grep -E '^[0-9]' | tr '\n' ' ')
 echo "IPs do endpoint: $EKS_EP_IPS"
 ```
 
-Criar as regras de bloqueio nos DOIS nodes:
+Criar as regras de bloqueio, um node por vez. O loop roda NO node (o bash do node
+faz o split dos IPs) - assim funciona igual no seu shell local, seja zsh ou bash:
 
 ```bash
-for node in 192.168.3.51 192.168.3.52; do
-  for ip in $EKS_EP_IPS; do
-    ssh -i ~/.ssh/id_ecdsa lopbruno@$node "sudo iptables -I OUTPUT -d $ip -j DROP"
-  done
-  echo "$node: bloqueado"
-done
+ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51 \
+  "for ip in $EKS_EP_IPS; do sudo iptables -I OUTPUT -d \$ip -j DROP; done"
+```
+
+```bash
+ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.52 \
+  "for ip in $EKS_EP_IPS; do sudo iptables -I OUTPUT -d \$ip -j DROP; done"
 ```
 
 Acompanhar os dois virarem NotReady:
@@ -467,16 +469,17 @@ Parar o FIS (ou aguardar o auto-revert - o template tem duração de 1h):
 aws fis stop-experiment --id ${EXPERIMENT_ID} --region sa-east-1
 ```
 
-Remover as regras de iptables nos DOIS nodes (par simétrico do bloqueio da Fase 3b,
-mesma variável `EKS_EP_IPS`):
+Remover as regras de iptables, um node por vez (par simétrico do bloqueio da Fase
+3b, mesma variável `EKS_EP_IPS`, loop rodando no node):
 
 ```bash
-for node in 192.168.3.51 192.168.3.52; do
-  for ip in $EKS_EP_IPS; do
-    ssh -i ~/.ssh/id_ecdsa lopbruno@$node "sudo iptables -D OUTPUT -d $ip -j DROP"
-  done
-  echo "$node: desbloqueado"
-done
+ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51 \
+  "for ip in $EKS_EP_IPS; do sudo iptables -D OUTPUT -d \$ip -j DROP; done"
+```
+
+```bash
+ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.52 \
+  "for ip in $EKS_EP_IPS; do sudo iptables -D OUTPUT -d \$ip -j DROP; done"
 ```
 
 Conferir que não sobrou regra (deve retornar 0 nos dois nodes):

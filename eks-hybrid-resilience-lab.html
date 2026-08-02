@@ -176,15 +176,13 @@ echo &quot;FIS iniciado: $EXPERIMENT_ID&quot;</code></pre>
 <p>Para demonstrar os hybrid nodes NotReady SEM afetar a LAN local (nao desconecte a NIC - isso mataria os paths locais), bloqueie o acesso do kubelet ao endpoint do EKS nos DOIS nodes. Assim o datacenter inteiro fica &quot;perdido&quot; para o control plane, que e o cenario real de &quot;a AWS caiu para o DC&quot;.</p>
 <p>Resolver os IPs do endpoint e guardar na variável (mudam - sempre re-resolver). A remoção das regras, na Fase 5 (Recovery), reutiliza a mesma variável:</p>
 <pre><code class="language-bash">export EKS_EP_IPS=$(dig +short $(aws eks describe-cluster --name llm-vmware-hybrid \
-  --region sa-east-1 --query &#x27;cluster.endpoint&#x27; --output text | sed &#x27;s|https://||&#x27;) | grep -E &#x27;^[0-9]&#x27;)
+  --region sa-east-1 --query &#x27;cluster.endpoint&#x27; --output text | sed &#x27;s|https://||&#x27;) | grep -E &#x27;^[0-9]&#x27; | tr &#x27;\n&#x27; &#x27; &#x27;)
 echo &quot;IPs do endpoint: $EKS_EP_IPS&quot;</code></pre>
-<p>Criar as regras de bloqueio nos DOIS nodes:</p>
-<pre><code class="language-bash">for node in 192.168.3.51 192.168.3.52; do
-  for ip in $EKS_EP_IPS; do
-    ssh -i ~/.ssh/id_ecdsa lopbruno@$node &quot;sudo iptables -I OUTPUT -d $ip -j DROP&quot;
-  done
-  echo &quot;$node: bloqueado&quot;
-done</code></pre>
+<p>Criar as regras de bloqueio, um node por vez. O loop roda NO node (o bash do node faz o split dos IPs) - assim funciona igual no seu shell local, seja zsh ou bash:</p>
+<pre><code class="language-bash">ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51 \
+  &quot;for ip in $EKS_EP_IPS; do sudo iptables -I OUTPUT -d \$ip -j DROP; done&quot;</code></pre>
+<pre><code class="language-bash">ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.52 \
+  &quot;for ip in $EKS_EP_IPS; do sudo iptables -I OUTPUT -d \$ip -j DROP; done&quot;</code></pre>
 <p>Acompanhar os dois virarem NotReady:</p>
 <pre><code class="language-bash">watch -n5 &#x27;kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid&#x27;</code></pre>
 <details class="callout callout-warn"><summary>Nota: Resultado esperado: AMBOS os hybrid nodes NotReady em ~60s, taint unre...</summary><div><p>Resultado esperado: AMBOS os hybrid nodes NotReady em ~60s, taint unreachable:NoExecute aplicado, pods continuam Running (tolerations). E o mais forte: a comunicacao CROSS-NODE (Node1 para Node2) continua 200 - o mesh VXLAN on-prem nao depende do control plane. O DC inteiro opera autonomo.</p></div></details>
@@ -254,13 +252,11 @@ sudo crictl exec $GID wget -qO- --timeout=5 http://prometheus.onprem-monitoring:
 <p>O Recovery desfaz as duas falhas na ordem inversa: primeiro o FIS, depois as regras de iptables da Fase 3b.</p>
 <p>Parar o FIS (ou aguardar o auto-revert - o template tem duração de 1h):</p>
 <pre><code class="language-bash">aws fis stop-experiment --id ${EXPERIMENT_ID} --region sa-east-1</code></pre>
-<p>Remover as regras de iptables nos DOIS nodes (par simétrico do bloqueio da Fase 3b, mesma variável <code>EKS_EP_IPS</code>):</p>
-<pre><code class="language-bash">for node in 192.168.3.51 192.168.3.52; do
-  for ip in $EKS_EP_IPS; do
-    ssh -i ~/.ssh/id_ecdsa lopbruno@$node &quot;sudo iptables -D OUTPUT -d $ip -j DROP&quot;
-  done
-  echo &quot;$node: desbloqueado&quot;
-done</code></pre>
+<p>Remover as regras de iptables, um node por vez (par simétrico do bloqueio da Fase 3b, mesma variável <code>EKS_EP_IPS</code>, loop rodando no node):</p>
+<pre><code class="language-bash">ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51 \
+  &quot;for ip in $EKS_EP_IPS; do sudo iptables -D OUTPUT -d \$ip -j DROP; done&quot;</code></pre>
+<pre><code class="language-bash">ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.52 \
+  &quot;for ip in $EKS_EP_IPS; do sudo iptables -D OUTPUT -d \$ip -j DROP; done&quot;</code></pre>
 <p>Conferir que não sobrou regra (deve retornar 0 nos dois nodes):</p>
 <pre><code class="language-bash">for node in 192.168.3.51 192.168.3.52; do
   echo -n &quot;$node DROPs: &quot;
