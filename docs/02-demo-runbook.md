@@ -298,11 +298,13 @@ A remoção destas regras é um passo explícito da Fase 5 (Recovery) - o ambien
 
 > Nota (duvida comum): NAO da para alterar Tolerations durante a desconexao -
 > e campo do pod spec, exige o kube-apiserver (inalcancavel offline). A janela de
-> sobrevivencia (tolerationSeconds) tem que ser definida ANTES. Ja o TTL/GC de
-> imagem do containerd e config LOCAL do node, entao esse SIM pode ser alterado
-> via SSH + restart do containerd mesmo offline. Regra: objeto da API = imutavel
-> offline; config local do node = mutavel offline. Ref:
-> https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-kubernetes-pod-failover.html
+> sobrevivencia (tolerationSeconds) tem que ser definida ANTES.
+>
+> Ja o TTL/GC de imagem do containerd e config LOCAL do node, entao esse SIM pode
+> ser alterado via SSH + restart do containerd mesmo offline.
+>
+> Regra: objeto da API = imutavel offline; config local do node = mutavel offline.
+> Ref: https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-kubernetes-pod-failover.html
 
 ## Fase 3-cache: Pod crash durante a desconexão - image cache (5 min)
 
@@ -357,7 +359,11 @@ sudo crictl stop $(sudo crictl ps --name podinfo -q | head -1)
 > atrasa o retorno: o Kubernetes aplica crash-loop backoff localmente, mesmo
 > offline. Faça 1 kill apenas.
 
-> O kubelet é autônomo para reiniciar containers - restartPolicy funciona sem control plane. O requisito é a IMAGEM estar no cache local do containerd. Por isso duas configurações são obrigatórias em produção: pre-pull das imagens críticas em todos os nodes, e GC do containerd configurado para não descartar imagens (discard_unpacked_layers=false). Sem isso, um crash durante desconexão vira indisponibilidade - o node não consegue puxar do ECR.
+> O kubelet é autônomo para reiniciar containers - restartPolicy funciona sem control plane. O requisito é a IMAGEM estar no cache local do containerd.
+>
+> Por isso duas configurações são obrigatórias em produção: pre-pull das imagens críticas em todos os nodes, e GC do containerd configurado para não descartar imagens (discard_unpacked_layers=false).
+>
+> Sem isso, um crash durante desconexão vira indisponibilidade - o node não consegue puxar do ECR.
 
 **Configuração do containerd via nodeadm (prep - já aplicável no nodeConfig):**
 
@@ -600,9 +606,10 @@ O dashboard mostra:
 
 > Durante a Fase 3, o painel "Conectividade On-Prem para Nuvem" e os tiles de
 > "Nodes da Nuvem" ficam vermelhos, enquanto os hybrid nodes seguem UP e o Grafana
-> continua respondendo - porque o stack inteiro roda on-prem. É a prova de que o
-> DC mantém observabilidade própria mesmo cego para a AWS. Deixe este dashboard
-> aberto desde o início, ao lado das URLs do podinfo.
+> continua respondendo - porque o stack inteiro roda on-prem.
+>
+> É a prova de que o DC mantém observabilidade própria mesmo cego para a AWS.
+> Deixe este dashboard aberto desde o início, ao lado das URLs do podinfo.
 
 ## Trade-off das Tolerations
 
