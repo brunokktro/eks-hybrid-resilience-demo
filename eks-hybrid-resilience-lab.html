@@ -107,11 +107,10 @@ echo &quot;FIS_TEMPLATE_ID=$FIS_TEMPLATE_ID&quot;</code></pre>
 <details class="callout callout-warn"><summary>Nota: sobre sudo no node: os hybrid nodes já estão com <strong>NOPASSWD</strong> configur...</summary><div><p>Nota sobre sudo no node: os hybrid nodes já estão com <strong>NOPASSWD</strong> configurado para <code>crictl</code> e <code>iptables</code> (<code>/etc/sudoers.d/demo</code>), então os comandos com <code>sudo</code> nas Fases 2b, 3b e 3-cache rodam sem pedir senha - fluxo limpo na frente do cliente. Se precisar reaplicar num node novo: <code>echo &quot;lopbruno ALL=(ALL) NOPASSWD: /usr/local/bin/crictl, /usr/sbin/iptables&quot; | sudo tee /etc/sudoers.d/demo</code></p></div></details></section>
 <section id="fase1"><h1>Fase 1: Estado atual <span class="duration">5 min</span></h1>
 <p>Abra as duas URLs do podinfo no browser ANTES de tudo e deixe abertas o tempo todo. A app fica viva e o load balancing entre os pods aparece ao recarregar (o hostname alterna entre as réplicas):</p>
-<pre><code class="language-bash"># ALB (entrada pela regiao AWS) - abrir no browser
-echo &quot;http://$(kubectl get ingress demo-ingress -n demo-stone -o jsonpath=&#x27;{.status.loadBalancer.ingress[0].hostname}&#x27;)/&quot;
-
-# VIP on-prem (MetalLB, entrada local do DC) - abrir no browser
-echo &quot;http://192.168.3.240/&quot;</code></pre>
+<p>URL do ALB (entrada pela região AWS) - abrir no browser:</p>
+<pre><code class="language-bash">echo &quot;http://$(kubectl get ingress demo-ingress -n demo-stone -o jsonpath=&#x27;{.status.loadBalancer.ingress[0].hostname}&#x27;)/&quot;</code></pre>
+<p>URL do VIP on-prem (MetalLB, entrada local do DC) - abrir no browser:</p>
+<pre><code class="language-bash">echo &quot;http://192.168.3.240/&quot;</code></pre>
 <details class="callout callout-info"><summary>Detalhe: Recarregue cada URL algumas vezes: o campo hostname alterna entre serv...</summary><div><p>Recarregue cada URL algumas vezes: o campo hostname alterna entre server-hybrid-1-* (as duas réplicas) - é o LB distribuindo. Guarde estas abas - na Fase 3 a URL do ALB vai parar de responder e a do VIP vai continuar, ao vivo.</p></div></details>
 <p>Os nodes do cluster - repare no hybrid node (hostname <code>mi-xxxx</code>, IP on-prem <code>192.168.x</code>). A coluna LOCATION deixa claro o lado: <code>lab2-dc1</code> = datacenter on-prem, <code>sa-east-1x</code> = região AWS. Saída enxuta para caber em terminal com split:</p>
 <pre><code class="language-bash">kubectl get nodes -o custom-columns=&#x27;NODE:.metadata.name,STATUS:.status.conditions[?(@.type==&quot;Ready&quot;)].status,LOCATION:.metadata.labels.topology\.kubernetes\.io/zone,IP:.status.addresses[?(@.type==&quot;InternalIP&quot;)].address&#x27;</code></pre>
@@ -159,13 +158,13 @@ sudo crictl exec $CID curl -s https://checkip.amazonaws.com</code></pre>
 <pre><code class="language-bash"># Da LAN on-prem (ou do próprio node):
 curl -s http://192.168.3.240/ | jq &#x27;{hostname, message}&#x27;</code></pre></section>
 <section id="fase3"><h1>Fase 3: Desconexão em estado estável <span class="duration">10 min</span></h1>
-<p>Abra três terminais com os logs dos clients lado a lado:</p>
-<pre><code class="language-bash"># Terminal 1 - LOCAL (Node1 → Node1)
-kubectl logs -n demo-stone deploy/client-hybrid -f
-# Terminal 2 - CROSS-NODE (Node1 → Node2)
-kubectl logs -n demo-stone deploy/client-hybrid-to-hybrid -f
-# Terminal 3 - CROSS-CLUSTER (Cloud → Node1)
-kubectl logs -n demo-stone deploy/client-cloud-to-hybrid -f</code></pre>
+<p>Abra três terminais com os logs dos clients lado a lado.</p>
+<p>Terminal 1 - LOCAL (Node1 → Node1):</p>
+<pre><code class="language-bash">kubectl logs -n demo-stone deploy/client-hybrid -f</code></pre>
+<p>Terminal 2 - CROSS-NODE (Node1 → Node2):</p>
+<pre><code class="language-bash">kubectl logs -n demo-stone deploy/client-hybrid-to-hybrid -f</code></pre>
+<p>Terminal 3 - CROSS-CLUSTER (Cloud → Node1):</p>
+<pre><code class="language-bash">kubectl logs -n demo-stone deploy/client-cloud-to-hybrid -f</code></pre>
 <details class="callout callout-info"><summary>Detalhe: Os logs dos clients no hybrid node podem falhar via kubectl (control p...</summary><div><p>Os logs dos clients no hybrid node podem falhar via kubectl (control plane alcança o kubelet só pela VPN). Alternativa: SSH no node e ver via jornal do container, ou focar no client-cloud (kubelet cloud sempre acessível). Ver environment-status.</p></div></details>
 <p>Iniciar a falha via FIS. O comando captura o <code>EXPERIMENT_ID</code> (usado no stop da Fase 5) e tem fallback para o ID do template caso o <code>export</code> da Fase 0 não tenha sido feito:</p>
 <pre><code class="language-bash">EXPERIMENT_ID=$(aws fis start-experiment \

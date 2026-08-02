@@ -100,11 +100,15 @@ Abra as duas URLs do podinfo no browser ANTES de tudo e deixe abertas o tempo
 todo. A app fica viva e o load balancing entre os pods aparece ao recarregar (o
 hostname alterna entre as réplicas):
 
-```bash
-# ALB (entrada pela regiao AWS) - abrir no browser
-echo "http://$(kubectl get ingress demo-ingress -n demo-stone -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')/"
+URL do ALB (entrada pela região AWS) - abrir no browser:
 
-# VIP on-prem (MetalLB, entrada local do DC) - abrir no browser
+```bash
+echo "http://$(kubectl get ingress demo-ingress -n demo-stone -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')/"
+```
+
+URL do VIP on-prem (MetalLB, entrada local do DC) - abrir no browser:
+
+```bash
 echo "http://192.168.3.240/"
 ```
 
@@ -209,14 +213,23 @@ curl -s http://192.168.3.240/ | jq '{hostname, message}'
 
 ## Fase 3: Desconexão em estado estável (10 min)
 
-Abra três terminais com os logs dos clients lado a lado:
+Abra três terminais com os logs dos clients lado a lado.
+
+Terminal 1 - LOCAL (Node1 → Node1):
 
 ```bash
-# Terminal 1 - LOCAL (Node1 → Node1)
 kubectl logs -n demo-stone deploy/client-hybrid -f
-# Terminal 2 - CROSS-NODE (Node1 → Node2)
+```
+
+Terminal 2 - CROSS-NODE (Node1 → Node2):
+
+```bash
 kubectl logs -n demo-stone deploy/client-hybrid-to-hybrid -f
-# Terminal 3 - CROSS-CLUSTER (Cloud → Node1)
+```
+
+Terminal 3 - CROSS-CLUSTER (Cloud → Node1):
+
+```bash
 kubectl logs -n demo-stone deploy/client-cloud-to-hybrid -f
 ```
 
