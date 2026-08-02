@@ -183,6 +183,9 @@ echo &quot;IPs do endpoint: $EKS_EP_IPS&quot;</code></pre>
   &quot;for ip in $EKS_EP_IPS; do sudo iptables -I OUTPUT -d \$ip -j DROP; done&quot;</code></pre>
 <pre><code class="language-bash">ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.52 \
   &quot;for ip in $EKS_EP_IPS; do sudo iptables -I OUTPUT -d \$ip -j DROP; done&quot;</code></pre>
+<details class="callout callout-success"><summary>Dica: os dois nodes de uma vez (loop externo sobre os nodes literais - segur...</summary><div><p>Dica: os dois nodes de uma vez (loop externo sobre os nodes literais - seguro no zsh, o split dos IPs acontece no node):</p><pre><code class="language-bash">for node in 192.168.3.51 192.168.3.52; do
+  ssh -i ~/.ssh/id_ecdsa lopbruno@$node &quot;for ip in $EKS_EP_IPS; do sudo iptables -I OUTPUT -d \$ip -j DROP; done&quot;
+done</code></pre></div></details>
 <p>Acompanhar os dois virarem NotReady:</p>
 <pre><code class="language-bash">watch -n5 &#x27;kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid&#x27;</code></pre>
 <details class="callout callout-warn"><summary>Nota: Resultado esperado: AMBOS os hybrid nodes NotReady em ~60s, taint unre...</summary><div><p>Resultado esperado: AMBOS os hybrid nodes NotReady em ~60s, taint unreachable:NoExecute aplicado, pods continuam Running (tolerations). E o mais forte: a comunicacao CROSS-NODE (Node1 para Node2) continua 200 - o mesh VXLAN on-prem nao depende do control plane. O DC inteiro opera autonomo.</p></div></details>
@@ -257,6 +260,9 @@ sudo crictl exec $GID wget -qO- --timeout=5 http://prometheus.onprem-monitoring:
   &quot;for ip in $EKS_EP_IPS; do sudo iptables -D OUTPUT -d \$ip -j DROP; done&quot;</code></pre>
 <pre><code class="language-bash">ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.52 \
   &quot;for ip in $EKS_EP_IPS; do sudo iptables -D OUTPUT -d \$ip -j DROP; done&quot;</code></pre>
+<details class="callout callout-success"><summary>Dica: os dois nodes de uma vez (mesma lógica do bloqueio, com <code>-D</code>):</summary><div><p>Dica: os dois nodes de uma vez (mesma lógica do bloqueio, com <code>-D</code>):</p><pre><code class="language-bash">for node in 192.168.3.51 192.168.3.52; do
+  ssh -i ~/.ssh/id_ecdsa lopbruno@$node &quot;for ip in $EKS_EP_IPS; do sudo iptables -D OUTPUT -d \$ip -j DROP; done&quot;
+done</code></pre></div></details>
 <p>Conferir que não sobrou regra (deve retornar 0 nos dois nodes):</p>
 <pre><code class="language-bash">for node in 192.168.3.51 192.168.3.52; do
   echo -n &quot;$node DROPs: &quot;

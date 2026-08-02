@@ -274,6 +274,14 @@ ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.52 \
   "for ip in $EKS_EP_IPS; do sudo iptables -I OUTPUT -d \$ip -j DROP; done"
 ```
 
+> Dica: os dois nodes de uma vez (loop externo sobre os nodes literais - seguro no zsh, o split dos IPs acontece no node):
+>
+> ```bash
+> for node in 192.168.3.51 192.168.3.52; do
+>   ssh -i ~/.ssh/id_ecdsa lopbruno@$node "for ip in $EKS_EP_IPS; do sudo iptables -I OUTPUT -d \$ip -j DROP; done"
+> done
+> ```
+
 Acompanhar os dois virarem NotReady:
 
 ```bash
@@ -481,6 +489,14 @@ ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51 \
 ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.52 \
   "for ip in $EKS_EP_IPS; do sudo iptables -D OUTPUT -d \$ip -j DROP; done"
 ```
+
+> Dica: os dois nodes de uma vez (mesma lógica do bloqueio, com `-D`):
+>
+> ```bash
+> for node in 192.168.3.51 192.168.3.52; do
+>   ssh -i ~/.ssh/id_ecdsa lopbruno@$node "for ip in $EKS_EP_IPS; do sudo iptables -D OUTPUT -d \$ip -j DROP; done"
+> done
+> ```
 
 Conferir que não sobrou regra (deve retornar 0 nos dois nodes):
 
