@@ -390,13 +390,16 @@ dele não resolve. O monitoring "local" tinha uma dependência escondida da nuve
 ### O fix: réplicas de CoreDNS on-prem (recomendação oficial)
 
 Para clusters mixed-mode, a AWS recomenda pelo menos uma réplica de CoreDNS nos
-hybrid nodes e uma nos nodes da nuvem. Com `topologySpreadConstraints` por zona,
-o scheduler distribui as réplicas entre as zonas cloud e a zona do DC:
+hybrid nodes e uma nos nodes da nuvem. Neste ambiente o fix JÁ está aplicado na
+preparação - ele não pode ser aplicado durante a desconexão, porque o scheduler
+não consegue colocar novas réplicas em nodes NotReady.
 
-```bash
-kubectl -n kube-system patch deploy coredns --type merge -p '{"spec":{"replicas":3,"template":{"spec":{"topologySpreadConstraints":[{"maxSkew":1,"topologyKey":"topology.kubernetes.io/zone","whenUnsatisfiable":"DoNotSchedule","labelSelector":{"matchLabels":{"k8s-app":"kube-dns"}}}]}}}}'
-kubectl -n kube-system annotate svc kube-dns service.kubernetes.io/topology-mode=Auto --overwrite
-```
+> Referência - fix já aplicado no prep (não reaplicar aqui; comandos para reproduzir em outro ambiente):
+>
+> ```bash
+> kubectl -n kube-system patch deploy coredns --type merge -p '{"spec":{"replicas":3,"template":{"spec":{"topologySpreadConstraints":[{"maxSkew":1,"topologyKey":"topology.kubernetes.io/zone","whenUnsatisfiable":"DoNotSchedule","labelSelector":{"matchLabels":{"k8s-app":"kube-dns"}}}]}}}}'
+> kubectl -n kube-system annotate svc kube-dns service.kubernetes.io/topology-mode=Auto --overwrite
+> ```
 
 Confirmar a distribuição (deve haver réplica em node `mi-*`):
 

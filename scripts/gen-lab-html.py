@@ -77,17 +77,37 @@ def render_body(mdbody):
             q = []
             while j < len(blk) and blk[j].startswith('>'):
                 q.append(re.sub(r'^>\s?', '', blk[j])); j += 1
-            text = " ".join(x for x in q if x.strip())
+            # split callout body into prose and fenced code segments
+            segs, buf, in_code, code_lang = [], [], False, ''
+            for ln in q:
+                if ln.startswith('```'):
+                    if in_code:
+                        segs.append(('code', code_lang, '\n'.join(buf))); buf = []; in_code = False
+                    else:
+                        if buf: segs.append(('text', '', ' '.join(x for x in buf if x.strip()))); buf = []
+                        in_code = True; code_lang = ln.strip('`').strip()
+                    continue
+                buf.append(ln)
+            if buf:
+                segs.append(('code', code_lang, '\n'.join(buf)) if in_code else ('text', '', ' '.join(x for x in buf if x.strip())))
+            text = next((c for k, _, c in segs if k == 'text'), '')
             # choose callout type + summary label from leading keyword
             low = text.lower()
             if low.startswith(('dica', 'tip')): ctype, label = 'success', 'Dica'
             elif low.startswith(('nota', 'resultado esperado', 'nuance', 'comportamento', 'requisito')): ctype, label = 'warn', 'Nota'
             elif low.startswith(('pré-requisito','pre-requisito','ferramentas')): ctype, label = 'info', 'Setup'
+            elif low.startswith(('referência','referencia','fix já aplicado','fix ja aplicado')): ctype, label = 'info', 'Referência'
             else: ctype, label = 'info', 'Detalhe'
             # summary = first 60 chars
-            summ = re.sub(r'^(dica|tip|nota|detalhe)[:\s-]*', '', text, flags=re.I)
+            summ = re.sub(r'^(dica|tip|nota|detalhe|referência|referencia)[:\s-]*', '', text, flags=re.I)
             summ_short = (summ[:70] + '...') if len(summ) > 73 else summ
-            out.append(f'<details class="callout callout-{ctype}"><summary>{label}: {inline(summ_short)}</summary><div>{inline(text)}</div></details>')
+            body = ''
+            for k, lang2, c in segs:
+                if k == 'text' and c.strip(): body += f'<p>{inline(c)}</p>'
+                elif k == 'code':
+                    cls2 = f' class="language-{lang2}"' if lang2 else ''
+                    body += f'<pre><code{cls2}>{esc(c)}</code></pre>'
+            out.append(f'<details class="callout callout-{ctype}"><summary>{label}: {inline(summ_short)}</summary><div>{body}</div></details>')
             continue
         # table
         if line.startswith('|') and j+1 < len(blk) and re.match(r'^\|[-:\s|]+\|', blk[j+1]):
