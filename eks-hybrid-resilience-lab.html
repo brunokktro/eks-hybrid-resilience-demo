@@ -68,13 +68,14 @@ code{background:#2a2a2a;color:#e8d5a3;padding:2px 6px;border-radius:4px;font-siz
 <a href="#fase3">Fase 3: Desconexão em estado estável</a>
 <a href="#fase3cache">Fase 3-cache: Pod crash durante a desconexão - image cache</a>
 <a href="#fase4">Fase 4: Desconexão durante provisioning</a>
+<a href="#sec2">DNS Resiliency - a dependência escondida</a>
 <a href="#fase5">Fase 5: Recovery</a>
 <a href="#fase6">Fase 6: Cloud Bursting - overflow do DC para a AWS</a>
-<a href="#sec2">Trade-off das Tolerations</a>
-<a href="#sec3">Limitações conhecidas</a>
+<a href="#sec3">Trade-off das Tolerations</a>
+<a href="#sec4">Limitações conhecidas</a>
 <a href="#fase7">Fase 7: Observabilidade on-premises</a>
-<a href="#sec4">F.A.Q</a>
-<a href="#sec5">Cleanup</a>
+<a href="#sec5">F.A.Q</a>
+<a href="#sec6">Cleanup</a>
 </nav>
 <main class="content">
 <section id="intro"><h1>Introdução</h1>
@@ -86,15 +87,23 @@ code{background:#2a2a2a;color:#e8d5a3;padding:2px 6px;border-radius:4px;font-siz
 <p>*Componentes envolvidos no comportamento de failover de pods durante desconexões (fonte: <a href="https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-kubernetes-pod-failover.html">EKS Best Practices - Pod Failover</a>).*</p></section>
 <section id="fase0"><h1>Fase 0: Preparar o ambiente <span class="duration">2 min</span></h1>
 <p>Antes de tudo, confirmar em qual cluster estamos apontando. Numa rotina de várias demos, apontar para o cluster errado é o erro mais comum - sempre valide.</p>
+<p>Selecionar a conta/região da demo. Este é o passo mais importante: a demo inteira roda na conta e região específicas, e o profile default costuma apontar para outra conta - o que causa &quot;template not found&quot; no FIS e &quot;not found&quot; no kubectl. Aponte o profile com acesso ao cluster e ao FIS:</p>
+<pre><code class="language-bash">export AWS_PROFILE=devops-saopaulo
+aws sts get-caller-identity --query Account --output text   # confirme a conta da demo</code></pre>
 <p>Listar os contextos do kubeconfig:</p>
 <pre><code class="language-bash">kubectl config get-contexts</code></pre>
 <p>Garantir/renovar o contexto do cluster da demo (define o contexto ativo):</p>
 <pre><code class="language-bash">aws eks update-kubeconfig --name llm-vmware-hybrid --region sa-east-1</code></pre>
 <p>Confirmar o contexto atual antes de seguir:</p>
 <pre><code class="language-bash">kubectl config current-context</code></pre>
+<p>Exportar o ID do template do FIS para a sessão (auto-resolve - sobrevive a mudança de ID). A Fase 3 usa esta variável:</p>
+<pre><code class="language-bash">export FIS_TEMPLATE_ID=$(aws fis list-experiment-templates --region sa-east-1 \
+  --query &quot;experimentTemplates[?contains(description,&#x27;on-premises&#x27;)].id | [0]&quot; --output text)
+echo &quot;FIS_TEMPLATE_ID=$FIS_TEMPLATE_ID&quot;</code></pre>
 <h3>Links e acessos do ambiente (deixe abertos)</h3>
 <table><tr><th>Recurso</th><th>Endereço</th><th>Uso</th></tr><tr><td>App via ALB (região AWS)</td><td><code>kubectl get ingress demo-ingress -n demo-stone -o jsonpath=&#x27;{.status.loadBalancer.ingress[0].hostname}&#x27;</code></td><td>Ingress region-originated - cai no disconnect</td></tr><tr><td>App via VIP on-prem (MetalLB)</td><td><a href="http://192.168.3.240/">http://192.168.3.240/</a></td><td>Entrada local - sobrevive ao disconnect</td></tr><tr><td>Grafana on-prem</td><td><a href="http://192.168.3.242/">http://192.168.3.242/</a></td><td>Dashboard de saúde dos nodes + conectividade com a nuvem (anônimo)</td></tr><tr><td>SSH Node 1 / Node 2</td><td><code>ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51</code> / <code>...52</code></td><td>Comandos no node (crictl, iptables)</td></tr><tr><td>Cluster EKS</td><td><code>aws eks update-kubeconfig --name llm-vmware-hybrid --region sa-east-1</code></td><td>kubectl</td></tr></table>
 <details class="callout callout-info"><summary>Setup: Ferramentas recomendadas: <code>kubectl</code>, <code>jq</code>, <code>k9s</code> (painel visual) e `ku...</summary><div>Ferramentas recomendadas: <code>kubectl</code>, <code>jq</code>, <code>k9s</code> (painel visual) e <code>kube-ps1</code> no prompt (mostra o contexto atual, evita rodar no cluster errado). Layout: HTML do runbook na esquerda, iTerm2 na direita; na Fase 3, divida o terminal em 3 panes para os 3 clients lado a lado.</div></details>
+<details class="callout callout-info"><summary>Setup: Pré-requisito nos nodes: <code>crictl</code> instalado nos DOIS hybrid nodes (v1....</summary><div>Pré-requisito nos nodes: <code>crictl</code> instalado nos DOIS hybrid nodes (v1.31.1 em <code>/usr/local/bin</code>, config em <code>/etc/crictl.yaml</code>) - usado nas Fases 2b e 3-cache. O nodeadm NÃO o instala (ele é tooling de debug, não faz parte do bootstrap). Instalação: ver o passo único na Fase 3-cache.</div></details>
 <details class="callout callout-warn"><summary>Nota: sobre sudo no node: os hybrid nodes já estão com <strong>NOPASSWD</strong> configur...</summary><div>Nota sobre sudo no node: os hybrid nodes já estão com <strong>NOPASSWD</strong> configurado para <code>crictl</code> e <code>iptables</code> (<code>/etc/sudoers.d/demo</code>), então os comandos com <code>sudo</code> nas Fases 2b, 3b e 3-cache rodam sem pedir senha - fluxo limpo na frente do cliente. Se precisar reaplicar num node novo: <code>echo &quot;lopbruno ALL=(ALL) NOPASSWD: /usr/local/bin/crictl, /usr/sbin/iptables&quot; | sudo tee /etc/sudoers.d/demo</code></div></details></section>
 <section id="fase1"><h1>Fase 1: Estado atual <span class="duration">5 min</span></h1>
 <p>Abra as duas URLs do podinfo no browser ANTES de tudo e deixe abertas o tempo todo. A app fica viva e o load balancing entre os pods aparece ao recarregar (o hostname alterna entre as réplicas):</p>
@@ -138,11 +147,10 @@ curl -s &quot;http://${ALB}/&quot; | jq &#x27;{hostname, message}&#x27;</code></
 <p><strong>O que acontece:</strong> tráfego da internet → ALB (região) → Gateway → VXLAN → pod on-prem.</p>
 <h3>2b. Hybrid Nodes → Externo (Egress)</h3>
 <p>O teste de egress roda melhor via <code>crictl exec</code> no próprio node: <code>kubectl exec</code> em pods de hybrid node é instável (passa pelo API server -&gt; kubelet:10250 pela VPN). E use um endpoint confiável - <code>checkip.amazonaws.com</code> (AWS-owned) em vez do <code>httpbin.org</code>, que retorna 503 com frequência.</p>
-<pre><code class="language-bash"># logar no node 1 primeiro
-ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51
-
-# entao, no node:
-CID=$(sudo crictl ps --name podinfo -q | head -1)
+<p>Primeiro, logue no node 1:</p>
+<pre><code class="language-bash">ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51</code></pre>
+<p>Já no node, rode o teste de egress:</p>
+<pre><code class="language-bash">CID=$(sudo crictl ps --name podinfo -q | head -1)
 sudo crictl exec $CID curl -s https://checkip.amazonaws.com</code></pre>
 <details class="callout callout-warn"><summary>Nota: Resultado esperado: o IP público de egress do datacenter. Mostra que o...</summary><div>Resultado esperado: o IP público de egress do datacenter. Mostra que o pod on-prem sai para a internet pelo caminho do próprio DC, não pela AWS.</div></details>
 <h3>2c. LB On-Premises (MetalLB VIP)</h3>
@@ -158,48 +166,48 @@ kubectl logs -n demo-stone deploy/client-hybrid-to-hybrid -f
 # Terminal 3 - CROSS-CLUSTER (Cloud → Node1)
 kubectl logs -n demo-stone deploy/client-cloud-to-hybrid -f</code></pre>
 <details class="callout callout-info"><summary>Detalhe: Os logs dos clients no hybrid node podem falhar via kubectl (control p...</summary><div>Os logs dos clients no hybrid node podem falhar via kubectl (control plane alcança o kubelet só pela VPN). Alternativa: SSH no node e ver via jornal do container, ou focar no client-cloud (kubelet cloud sempre acessível). Ver environment-status.</div></details>
-<p>Iniciar a falha via FIS:</p>
-<pre><code class="language-bash">aws fis start-experiment \
-  --experiment-template-id ${FIS_TEMPLATE_ID} \
-  --region sa-east-1</code></pre>
+<p>Iniciar a falha via FIS. O comando captura o <code>EXPERIMENT_ID</code> (usado no stop da Fase 5) e tem fallback para o ID do template caso o <code>export</code> da Fase 0 não tenha sido feito:</p>
+<pre><code class="language-bash">EXPERIMENT_ID=$(aws fis start-experiment \
+  --experiment-template-id ${FIS_TEMPLATE_ID:-EXTCnS3KTdAc2AEME} \
+  --region sa-east-1 --query &#x27;experiment.id&#x27; --output text)
+echo &quot;FIS iniciado: $EXPERIMENT_ID&quot;</code></pre>
 <details class="callout callout-warn"><summary>Nota: Comportamento por tipo de endpoint EKS: se o kubelet alcança o endpoin...</summary><div>Comportamento por tipo de endpoint EKS: se o kubelet alcança o endpoint PÚBLICO do cluster via internet (caso deste lab), o node PERMANECE Ready durante o FIS - a falha derruba apenas o data path (cross-cluster/VXLAN). Em ambientes com endpoint privado + Direct Connect (produção típica), o FIS derruba ambos os paths de uma vez.</div></details>
 <h3>Fase 3b: NotReady + Tolerations (2 nodes)</h3>
 <p>Para demonstrar os hybrid nodes NotReady SEM afetar a LAN local (nao desconecte a NIC - isso mataria os paths locais), bloqueie o acesso do kubelet ao endpoint do EKS nos DOIS nodes. Assim o datacenter inteiro fica &quot;perdido&quot; para o control plane, que e o cenario real de &quot;a AWS caiu para o DC&quot;.</p>
-<p>Resolver os IPs do endpoint (mudam - sempre re-resolver):</p>
-<pre><code class="language-bash">dig +short $(aws eks describe-cluster --name llm-vmware-hybrid \
-  --region sa-east-1 --query &#x27;cluster.endpoint&#x27; --output text | sed &#x27;s|https://||&#x27;)</code></pre>
-<p>Bloquear nos DOIS nodes (via SSH em cada um):</p>
-<pre><code class="language-bash"># Node 1
-ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51 \
-  &quot;sudo iptables -I OUTPUT -d &lt;IP1&gt; -j DROP; sudo iptables -I OUTPUT -d &lt;IP2&gt; -j DROP&quot;
-
-# Node 2
-ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.52 \
-  &quot;sudo iptables -I OUTPUT -d &lt;IP1&gt; -j DROP; sudo iptables -I OUTPUT -d &lt;IP2&gt; -j DROP&quot;</code></pre>
+<p>Resolver os IPs do endpoint e guardar na variável (mudam - sempre re-resolver). A remoção das regras, na Fase 5 (Recovery), reutiliza a mesma variável:</p>
+<pre><code class="language-bash">export EKS_EP_IPS=$(dig +short $(aws eks describe-cluster --name llm-vmware-hybrid \
+  --region sa-east-1 --query &#x27;cluster.endpoint&#x27; --output text | sed &#x27;s|https://||&#x27;) | grep -E &#x27;^[0-9]&#x27;)
+echo &quot;IPs do endpoint: $EKS_EP_IPS&quot;</code></pre>
+<p>Criar as regras de bloqueio nos DOIS nodes:</p>
+<pre><code class="language-bash">for node in 192.168.3.51 192.168.3.52; do
+  for ip in $EKS_EP_IPS; do
+    ssh -i ~/.ssh/id_ecdsa lopbruno@$node &quot;sudo iptables -I OUTPUT -d $ip -j DROP&quot;
+  done
+  echo &quot;$node: bloqueado&quot;
+done</code></pre>
 <p>Acompanhar os dois virarem NotReady:</p>
 <pre><code class="language-bash">watch -n5 &#x27;kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid&#x27;</code></pre>
 <details class="callout callout-warn"><summary>Nota: Resultado esperado: AMBOS os hybrid nodes NotReady em ~60s, taint unre...</summary><div>Resultado esperado: AMBOS os hybrid nodes NotReady em ~60s, taint unreachable:NoExecute aplicado, pods continuam Running (tolerations). E o mais forte: a comunicacao CROSS-NODE (Node1 para Node2) continua 200 - o mesh VXLAN on-prem nao depende do control plane. O DC inteiro opera autonomo.</div></details>
-<p>Reverter (nos dois nodes):</p>
-<pre><code class="language-bash">ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51 \
-  &quot;sudo iptables -D OUTPUT -d &lt;IP1&gt; -j DROP; sudo iptables -D OUTPUT -d &lt;IP2&gt; -j DROP&quot;
-ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.52 \
-  &quot;sudo iptables -D OUTPUT -d &lt;IP1&gt; -j DROP; sudo iptables -D OUTPUT -d &lt;IP2&gt; -j DROP&quot;</code></pre>
+<p>A remoção destas regras é um passo explícito da Fase 5 (Recovery) - o ambiente permanece desconectado pelas próximas fases de teste.</p>
 <details class="callout callout-warn"><summary>Nota: (duvida comum): NAO da para alterar Tolerations durante a desconexao -...</summary><div>Nota (duvida comum): NAO da para alterar Tolerations durante a desconexao - e campo do pod spec, exige o kube-apiserver (inalcancavel offline). A janela de sobrevivencia (tolerationSeconds) tem que ser definida ANTES. Ja o TTL/GC de imagem do containerd e config LOCAL do node, entao esse SIM pode ser alterado via SSH + restart do containerd mesmo offline. Regra: objeto da API = imutavel offline; config local do node = mutavel offline. Ref: https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-kubernetes-pod-failover.html</div></details></section>
 <section id="fase3cache"><h1>Fase 3-cache: Pod crash durante a desconexão - image cache <span class="duration">5 min</span></h1>
 <p><strong>Ponto BÁSICO e crítico:</strong> um pod que crasha durante a desconexão REINICIA? SIM - o kubelet gerencia <code>restartPolicy</code> localmente, sem API server, DESDE QUE a imagem esteja no cache local do containerd.</p>
 <p>O restart e SUB-SEGUNDO (imagem em cache), entao um curl no VIP nao pega o blip</p>
 <ul><li>com 2 replicas nem cai. A forma de visualizar na tela é pelo restart count do</li></ul>
 <p>container (coluna ATTEMPT do crictl), em dois terminais no node.</p>
-<p>Pre-requisito: <code>crictl</code> instalado no node (uma vez):</p>
-<pre><code class="language-bash">ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51
-sudo curl -sL &quot;https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.31.1/crictl-v1.31.1-linux-amd64.tar.gz&quot; | sudo tar -C /usr/local/bin -xz
+<p>Pre-requisito: <code>crictl</code> instalado no node (uma vez). Logue no node:</p>
+<pre><code class="language-bash">ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51</code></pre>
+<p>Já no node, instale o crictl:</p>
+<pre><code class="language-bash">sudo curl -sL &quot;https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.31.1/crictl-v1.31.1-linux-amd64.tar.gz&quot; | sudo tar -C /usr/local/bin -xz
 echo &quot;runtime-endpoint: unix:///run/containerd/containerd.sock&quot; | sudo tee /etc/crictl.yaml</code></pre>
-<p>Terminal A (no node) - painel ao vivo do restart count:</p>
-<pre><code class="language-bash">ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51
-sudo watch -n1 &#x27;crictl ps -a --name podinfo&#x27;</code></pre>
-<p>Terminal B (no node) - UM kill unico (nao repita, senao entra em CrashLoopBackOff):</p>
-<pre><code class="language-bash">ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51
-sudo crictl stop $(sudo crictl ps --name podinfo -q | head -1)</code></pre>
+<p>Terminal A (no node) - painel ao vivo do restart count. Logue no node:</p>
+<pre><code class="language-bash">ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51</code></pre>
+<p>E abra o watch do restart count:</p>
+<pre><code class="language-bash">sudo watch -n1 &#x27;crictl ps -a --name podinfo&#x27;</code></pre>
+<p>Terminal B (no node) - UM kill único (não repita, senão entra em CrashLoopBackOff). Logue no node (segundo terminal):</p>
+<pre><code class="language-bash">ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51</code></pre>
+<p>E dê um único kill no container:</p>
+<pre><code class="language-bash">sudo crictl stop $(sudo crictl ps --name podinfo -q | head -1)</code></pre>
 <details class="callout callout-info"><summary>Detalhe: No Terminal A o container vai para Exited e, em ~2-5s, sobe um novo co...</summary><div>No Terminal A o container vai para Exited e, em ~2-5s, sobe um novo container Running com ATTEMPT +1 - o kubelet reiniciou da imagem em cache, sem falar com a AWS. Se o kill se repetir várias vezes, o backoff exponencial (10s-&gt;20s-&gt;40s) atrasa o retorno: o Kubernetes aplica crash-loop backoff localmente, mesmo offline. Faça 1 kill apenas.</div></details>
 <details class="callout callout-info"><summary>Detalhe: O kubelet é autônomo para reiniciar containers - restartPolicy funcion...</summary><div>O kubelet é autônomo para reiniciar containers - restartPolicy funciona sem control plane. O requisito é a IMAGEM estar no cache local do containerd. Por isso duas configurações são obrigatórias em produção: pre-pull das imagens críticas em todos os nodes, e GC do containerd configurado para não descartar imagens (discard_unpacked_layers=false). Sem isso, um crash durante desconexão vira indisponibilidade - o node não consegue puxar do ECR.</div></details>
 <p><strong>Configuração do containerd via nodeadm (prep - já aplicável no nodeConfig):</strong></p>
@@ -219,10 +227,46 @@ server-hybrid-1-yyyyy   Running   (existentes - processando)
 server-hybrid-1-zzzzz   Pending   (NOVO - scheduler não alcança o node)
 server-hybrid-1-wwwww   Pending   (NOVO - scheduler não alcança o node)</code></pre>
 <details class="callout callout-info"><summary>Detalhe: Esta é a limitação conhecida. Durante a desconexão, ações do control p...</summary><div>Esta é a limitação conhecida. Durante a desconexão, ações do control plane (novo scheduling, HPA, rollout) ficam indisponíveis. MAS os pods existentes continuam processando. A mitigação é dimensionar as réplicas iniciais para a carga esperada (N+1 ou N+2).</div></details></section>
+<section id="sec2"><h1>DNS Resiliency - a dependência escondida <span class="duration">10 min</span></h1>
+<p>Último teste de falha, e o mais sutil. Ainda desconectado (FIS + iptables ativos), uma pergunta: o monitoring on-prem da Fase 7 sobrevive? Ele roda 100% nos hybrid nodes... mas o Grafana consulta o Prometheus pelo NOME (<code>prometheus.onprem-monitoring</code>), e resolver esse nome exige o CoreDNS. Onde roda o CoreDNS?</p>
+<pre><code class="language-bash">kubectl get pods -n kube-system -l k8s-app=kube-dns -o wide</code></pre>
+<p>No deploy padrão do EKS, as réplicas do CoreDNS ficam nos nodes da NUVEM. Durante a desconexão, o hybrid node não alcança o CoreDNS - o DNS dá timeout e TODA aplicação on-prem que resolve nomes quebra, mesmo com o workload inteiro rodando local. O dashboard fica lento e sem dados, não porque o Prometheus caiu, mas porque o nome dele não resolve. O monitoring &quot;local&quot; tinha uma dependência escondida da nuvem.</p>
+<details class="callout callout-info"><summary>Detalhe: Só um teste de caos revela esse tipo de dependência. A stack foi desen...</summary><div>Só um teste de caos revela esse tipo de dependência. A stack foi desenhada para sobreviver ao disconnect, mas a camada mais básica - resolução de nomes - ainda morava na nuvem.</div></details>
+<h3>O fix: réplicas de CoreDNS on-prem (recomendação oficial)</h3>
+<p>Para clusters mixed-mode, a AWS recomenda pelo menos uma réplica de CoreDNS nos hybrid nodes e uma nos nodes da nuvem. Com <code>topologySpreadConstraints</code> por zona, o scheduler distribui as réplicas entre as zonas cloud e a zona do DC:</p>
+<pre><code class="language-bash">kubectl -n kube-system patch deploy coredns --type merge -p &#x27;{&quot;spec&quot;:{&quot;replicas&quot;:3,&quot;template&quot;:{&quot;spec&quot;:{&quot;topologySpreadConstraints&quot;:[{&quot;maxSkew&quot;:1,&quot;topologyKey&quot;:&quot;topology.kubernetes.io/zone&quot;,&quot;whenUnsatisfiable&quot;:&quot;DoNotSchedule&quot;,&quot;labelSelector&quot;:{&quot;matchLabels&quot;:{&quot;k8s-app&quot;:&quot;kube-dns&quot;}}}]}}}}&#x27;
+kubectl -n kube-system annotate svc kube-dns service.kubernetes.io/topology-mode=Auto --overwrite</code></pre>
+<p>Confirmar a distribuição (deve haver réplica em node <code>mi-*</code>):</p>
+<pre><code class="language-bash">kubectl get pods -n kube-system -l k8s-app=kube-dns -o custom-columns=&#x27;POD:.metadata.name,NODE:.spec.nodeName&#x27;</code></pre>
+<details class="callout callout-info"><summary>Detalhe: A annotation <code>topology-mode: Auto</code> habilita Topology Aware Routing: qu...</summary><div>A annotation <code>topology-mode: Auto</code> habilita Topology Aware Routing: quando ativa, os nodes preferem endpoints de DNS da própria zona (hybrid consulta a réplica local). Em clusters pequenos os hints podem não ativar (heurística de número mínimo de endpoints) - as réplicas locais continuam valendo, com retry do resolver. O CoreDNS local serve do cache de informer mesmo sem alcançar o API server - nomes existentes continuam resolvendo offline.</div></details>
+<h3>Testar durante a desconexão</h3>
+<p>Com a réplica local no ar, o mesmo teste que falhava agora responde:</p>
+<pre><code class="language-bash">ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51</code></pre>
+<p>Já no node, resolução + query de dentro do container do Grafana:</p>
+<pre><code class="language-bash">GID=$(sudo crictl ps --name grafana -q | head -1)
+sudo crictl exec $GID wget -qO- --timeout=5 http://prometheus.onprem-monitoring:9090/-/healthy</code></pre>
+<p>Resultado: <code>Prometheus Server is Healthy</code> - o Grafana volta a popular os painéis, resolvendo o nome via CoreDNS on-prem, sem tocar a nuvem. O Prometheus continua configurado por DNS (idiomático) - quem ficou resiliente foi a plataforma.</p>
+<h3>E o Route 53? (dúvida comum)</h3>
+<p>Três camadas de resolução, três comportamentos na falha da região:</p>
+<ul><li><strong>Nomes internos do cluster</strong> (<code>*.svc.cluster.local</code>): resolvidos SÓ pelo CoreDNS - nunca tocam o Route 53. Fix: réplica local (acima).</li><li><strong>Nomes públicos via resolver próprio do DC</strong> (internet): sobrevivem - o data plane do Route 53 é global (edge locations anycast, SLA 100%), desenhado para manter disponibilidade mesmo quando o control plane degrada. Falha em sa-east-1 NÃO derruba a resolução pública.</li><li><strong>Nomes resolvidos via Route 53 Resolver endpoint na VPC</strong>: o endpoint é REGIONAL e alcançado pelo link privado - a falha da região ou do link quebra esse caminho, mesmo com o R53 global saudável. Recomendação: o DC resolve nomes públicos pelo resolver local dele, sem depender do caminho da VPC.</li></ul>
+<p>Refs: <a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/disaster-recovery-resiliency.html">Resilience in Amazon Route 53</a> | <a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/route-53-concepts.html">Control and data plane concepts</a> | <a href="https://docs.aws.amazon.com/eks/latest/userguide/hybrid-nodes-add-ons.html">CoreDNS em hybrid nodes</a></p></section>
 <section id="fase5"><h1>Fase 5: Recovery <span class="duration">5 min</span></h1>
-<p>Parar o FIS (ou aguardar auto-revert em 5min):</p>
-<pre><code class="language-bash">aws fis stop-experiment --id &lt;EXPERIMENT_ID&gt; --region sa-east-1</code></pre>
-<p>O client-cloud-to-hybrid volta a 200 sozinho (auto-heal), o node volta Ready, os pods Pending são agendados. Zero intervenção manual.</p>
+<p>O Recovery desfaz as duas falhas na ordem inversa: primeiro o FIS, depois as regras de iptables da Fase 3b.</p>
+<p>Parar o FIS (ou aguardar o auto-revert - o template tem duração de 1h):</p>
+<pre><code class="language-bash">aws fis stop-experiment --id ${EXPERIMENT_ID} --region sa-east-1</code></pre>
+<p>Remover as regras de iptables nos DOIS nodes (par simétrico do bloqueio da Fase 3b, mesma variável <code>EKS_EP_IPS</code>):</p>
+<pre><code class="language-bash">for node in 192.168.3.51 192.168.3.52; do
+  for ip in $EKS_EP_IPS; do
+    ssh -i ~/.ssh/id_ecdsa lopbruno@$node &quot;sudo iptables -D OUTPUT -d $ip -j DROP&quot;
+  done
+  echo &quot;$node: desbloqueado&quot;
+done</code></pre>
+<p>Conferir que não sobrou regra (deve retornar 0 nos dois nodes):</p>
+<pre><code class="language-bash">for node in 192.168.3.51 192.168.3.52; do
+  echo -n &quot;$node DROPs: &quot;
+  ssh -i ~/.ssh/id_ecdsa lopbruno@$node &quot;sudo iptables -L OUTPUT -n | grep -c DROP&quot;
+done</code></pre>
+<p>O client-cloud-to-hybrid volta a 200 sozinho (auto-heal), os nodes voltam Ready em ~10-30s, os pods Pending são agendados. Zero intervenção manual.</p>
 <pre><code class="language-bash">kubectl get nodes -l eks.amazonaws.com/compute-type=hybrid
 kubectl scale deploy server-hybrid-1 -n demo-stone --replicas=2</code></pre></section>
 <section id="fase6"><h1>Fase 6: Cloud Bursting - overflow do DC para a AWS <span class="duration">10 min</span></h1>
@@ -239,6 +283,10 @@ sleep 30
 # Ver a distribuição: hybrid enche, o excedente vai pros cloud nodes
 kubectl get pods -n demo-stone -l app=burst-app -o wide \
   --no-headers | awk &#x27;{print $7}&#x27; | sort | uniq -c</code></pre>
+<p>Para ver pod a pod (agrupado por node - <code>mi-*</code> = on-prem, <code>ip-*</code> = cloud), saída compacta que cabe em terminal com split:</p>
+<pre><code class="language-bash">kubectl get pods -n demo-stone -l app=burst-app \
+  -o custom-columns=&#x27;POD:.metadata.name,NODE:.spec.nodeName&#x27; \
+  --sort-by=.spec.nodeName</code></pre>
 <p><strong>Resultado validado:</strong> ~7 pods permanecem no DC (hybrid), ~3 transbordam para os cloud nodes da AWS. O overflow é automático - <code>preferred</code> affinity, não <code>required</code>: o scheduler prefere on-prem, mas usa a nuvem quando o DC enche.</p>
 <details class="callout callout-info"><summary>Detalhe: Na prática: a carga normal roda no datacenter, com o custo e a latênci...</summary><div>Na prática: a carga normal roda no datacenter, com o custo e a latência do hardware já existente. Num pico - Black Friday, campanha - a capacidade transborda para a AWS automaticamente, sem reconfigurar nada. Elasticidade sob demanda mantendo o baseline no DC.</div></details>
 <details class="callout callout-success"><summary>Dica: k9s: em <code>:pods</code> filtrado em <code>demo-stone</code>, pressione <code>w</code> para exibir a ...</summary><div>Dica k9s: em <code>:pods</code> filtrado em <code>demo-stone</code>, pressione <code>w</code> para exibir a coluna NODE. Ao escalar o burst-app, veja os pods nascendo e se espalhando: a maioria nos hybrid nodes e o excedente nos cloud nodes. Bursting visível pod a pod.</div></details>
@@ -247,12 +295,12 @@ kubectl get pods -n demo-stone -l app=burst-app -o wide \
 <details class="callout callout-warn"><summary>Nota: Nuance importante: o scale-down remove pods mas NÃO move os sobreviven...</summary><div>Nuance importante: o scale-down remove pods mas NÃO move os sobreviventes de volta - a affinity só age no scheduling. Para consolidar ativamente no DC use <code>kubectl rollout restart deploy/burst-app</code> (recria os pods, que voltam pro hybrid por preferência) ou o Descheduler em produção. Validado: pós rollout restart, 100% de volta ao hybrid.</div></details>
 <h3>Evolução em produção</h3>
 <p>Este demo usa cloud nodes já existentes (overflow). Em produção, para provisionar capacidade cloud SOB DEMANDA e destruir depois: <strong>Karpenter + Spot</strong> disparado por <strong>KEDA/Prometheus</strong> monitorando a carga local. É a mesma estratégia do sample oficial aws-samples/sample-eks-hybrid-nodes-gpu-burst-scaling, aplicável a workloads web (não só LLM). Pode ser uma demo dedicada.</p></section>
-<section id="sec2"><h1>Trade-off das Tolerations</h1>
+<section id="sec3"><h1>Trade-off das Tolerations</h1>
 <p>A demo usa <code>tolerationSeconds: 3600</code> (1h). <strong>Não existe valor universal</strong> - o mesmo mecanismo que protege na desconexão ATRASA a recuperação numa falha real de node (o control plane não distingue &quot;rede caiu&quot; de &quot;node morreu&quot;).</p>
 <table><tr><th>Perfil da app</th><th>tolerationSeconds sugerido</th></tr><tr><td>Stateless com réplicas em vários nodes</td><td>300-900 (failover rápido importa mais)</td></tr><tr><td>Stateful singleton</td><td>Longo/indefinido (evita split-brain)</td></tr><tr><td>DC-crítica (&quot;se a AWS cair&quot;)</td><td>Longo + réplicas em múltiplos nodes</td></tr></table>
 <p><strong>Insight:</strong> com zone labels (<code>topology.kubernetes.io/zone</code> por DC), o Kubernetes CANCELA evictions quando a zona inteira fica unreachable - o cenário &quot;AWS caiu&quot; já fica protegido por design.</p></section>
-<section id="sec3"><h1>Limitações conhecidas</h1>
-<table><tr><th>Limitação</th><th>Mitigação</th></tr><tr><td>Control plane na região (sem scheduling na desconexão)</td><td>Pré-dimensionar réplicas</td></tr><tr><td>SSM credentials: 1h / IAM Roles Anywhere: até 12h</td><td>Usar IRA com durationSeconds alto</td></tr><tr><td>Cilium pode reiniciar na desconexão (BGP)</td><td>v1.17+ tem o fix; usar VXLAN (nosso caso)</td></tr><tr><td>Restart de node offline: pods não voltam</td><td>Réplicas multi-node (Cenário 4)</td></tr><tr><td>ALB region-originated cai na desconexão</td><td>LB local (MetalLB/F5) para tráfego do DC</td></tr></table></section>
+<section id="sec4"><h1>Limitações conhecidas</h1>
+<table><tr><th>Limitação</th><th>Mitigação</th></tr><tr><td>Control plane na região (sem scheduling na desconexão)</td><td>Pré-dimensionar réplicas</td></tr><tr><td>SSM credentials: 1h / IAM Roles Anywhere: até 12h</td><td>Usar IRA com durationSeconds alto</td></tr><tr><td>Cilium pode reiniciar na desconexão (BGP)</td><td>v1.17+ tem o fix; usar VXLAN (nosso caso)</td></tr><tr><td>Restart de node offline: pods não voltam</td><td>Réplicas multi-node (Cenário 4)</td></tr><tr><td>ALB region-originated cai na desconexão</td><td>LB local (MetalLB/F5) para tráfego do DC</td></tr><tr><td>CoreDNS default fica só na nuvem (DNS morre no disconnect)</td><td>Réplicas on-prem via topologySpread (seção DNS Resiliency)</td></tr></table></section>
 <section id="fase7"><h1>Fase 7: Observabilidade on-premises <span class="duration">5 min</span></h1>
 <p>Monitoring &quot;à moda antiga&quot; rodando 100% NOS hybrid nodes (Prometheus + Grafana + blackbox), independente da nuvem. Cobre a visibilidade que o Container Insights (cloud-side) não dá: a visão DO ON-PREM enxergando a nuvem, e que SOBREVIVE à desconexão porque roda localmente.</p>
 <p>Abra o Grafana on-prem (acesso anônimo, dashboard já provisionado):</p>
@@ -261,7 +309,7 @@ echo &quot;http://192.168.3.242/  (dashboard: On-Prem - Saude dos Nodes + Conect
 <p>O dashboard mostra:</p>
 <ul><li>Conectividade On-Prem para Nuvem (probe ICMP ao VPC): CONECTADO / DESCONECTADO</li><li>Hybrid Nodes UP (monitorados localmente pelo Prometheus on-prem)</li><li>CPU e memória por hybrid node</li><li>Nodes da Nuvem alcançáveis do on-prem (um tile por node, verde OK / vermelho INALCANÇÁVEL)</li></ul>
 <details class="callout callout-info"><summary>Detalhe: Durante a Fase 3, o painel &quot;Conectividade On-Prem para Nuvem&quot; e os til...</summary><div>Durante a Fase 3, o painel &quot;Conectividade On-Prem para Nuvem&quot; e os tiles de &quot;Nodes da Nuvem&quot; ficam vermelhos, enquanto os hybrid nodes seguem UP e o Grafana continua respondendo - porque o stack inteiro roda on-prem. É a prova de que o DC mantém observabilidade própria mesmo cego para a AWS. Deixe este dashboard aberto desde o início, ao lado das URLs do podinfo.</div></details></section>
-<section id="sec4"><h1>F.A.Q</h1>
+<section id="sec5"><h1>F.A.Q</h1>
 <h3>E storage persistente? Nossos workloads stateful?</h3>
 <p>Stateful <strong>funciona</strong> em Hybrid Nodes - o que <strong>não</strong> funciona é EBS (preso à AZ, e o EBS CSI não está na lista de add-ons compatíveis). Opções locais:</p>
 <ul><li><strong>hostPath</strong> - simples, preso ao node (é como o <a href="https://github.com/aws-samples/sample-eks-hybrid-nodes-gpu-burst-scaling">sample oficial de GPU burst</a> persiste modelos LLM localmente)</li><li><strong>local PersistentVolumes</strong> com <code>nodeAffinity</code></li><li><strong>CSI de terceiros</strong> - Longhorn, Ceph, OpenEBS, ou o CSI do storage array do próprio DC</li><li><strong>FSx CSI</strong> está na lista de compatíveis, mas é storage de rede dependente da região (falha na desconexão)</li></ul>
@@ -282,10 +330,13 @@ echo &quot;http://192.168.3.242/  (dashboard: On-Prem - Saude dos Nodes + Conect
 <ul><li>Com <code>failurePolicy: Fail</code>, isso <strong>bloqueia operações no cluster INTEIRO</strong> (não só on-prem)</li><li><strong>Recomendações:</strong> rodar webhooks críticos em nodes cloud, ou usar <code>failurePolicy: Ignore</code> + réplicas nos dois lados</li><li><strong>Ação:</strong> revisar os webhooks da plataforma (Kyverno/OPA/Gatekeeper) sob esse critério</li></ul>
 <h3>E o cloud bursting?</h3>
 <p>Demonstrado na <strong>Fase 6</strong> (overflow) e evoluível para <strong>Karpenter + Spot</strong> disparado por KEDA/Prometheus. Nota: bursting <strong>depende</strong> da conectividade com a região - é complementar à resiliência (um usa a nuvem quando ela está lá, o outro sobrevive quando não está).</p>
+<h3>O DNS não vira ponto único de falha no disconnect?</h3>
+<p>Vira, se o CoreDNS rodar só na nuvem - foi um achado deste lab (seção DNS Resiliency):</p>
+<ul><li><strong>Nomes internos</strong> (<code>*.svc.cluster.local</code>): exigem CoreDNS. Fix: <strong>réplica on-prem</strong> via <code>topologySpreadConstraints</code> (recomendação oficial para mixed-mode)</li><li><strong>Nomes públicos</strong>: o data plane do Route 53 é <strong>global</strong> (SLA 100%) - mas se o DC resolve via <strong>Resolver endpoint na VPC</strong> (regional, via link privado), o caminho morre com o disconnect. Resolver local no DC para nomes públicos</li><li>O CoreDNS local serve do cache mesmo sem API server - nomes existentes resolvem offline</li></ul>
 <h3>Chicago e Atlanta: um cluster para os dois DCs?</h3>
 <p><strong>Recomendação: um cluster por DC</strong> (blast radius menor, upgrades independentes, menor latência). Se optarem por cluster único com nodes nos dois DCs:</p>
 <ul><li><strong>Zone labels obrigatórias</strong> (<code>topology.kubernetes.io/zone</code> por DC) - o Kubernetes cancela evictions quando uma zona INTEIRA fica unreachable, protegendo cada DC</li><li>Requisito de rede: até <strong>200ms RTT</strong> e <strong>100Mbps+</strong> por DC</li></ul></section>
-<section id="sec5"><h1>Cleanup</h1>
+<section id="sec6"><h1>Cleanup</h1>
 <pre><code class="language-bash">kubectl delete ns demo-stone
 cd terraform/ &amp;&amp; terraform destroy</code></pre></section>
 </main>
