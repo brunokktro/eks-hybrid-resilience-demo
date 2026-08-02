@@ -98,3 +98,41 @@ réplicas) - é a evolução natural, referência no sample gpu-burst-scaling.
 
 **Nuance:** scale-down não reconsolida pods sobreviventes (affinity só age no
 scheduling). Consolidação ativa via `rollout restart` ou Descheduler.
+
+
+## ADR: DNS resiliente nos hybrid nodes (Fase 4b)
+
+**Decisão (validada 8/8 no disconnect):** CoreDNS rodando em CADA node schedulable
+(topology spread por `kubernetes.io/hostname`, `nodeTaintsPolicy: Honor`) +
+`internalTrafficPolicy: Local` no service kube-dns. Cada pod resolve pelo CoreDNS
+do próprio node - sem depender de alcançar a nuvem no disconnect.
+
+**Por que não topology hints (Topology Aware Routing / trafficDistribution):** em
+cluster pequeno/assimétrico os hints não populam (validado - annotation e
+trafficDistribution, ambos com hints vazios). `internalTrafficPolicy: Local` não
+depende de hints.
+
+**Regra crítica:** o fix TEM que estar pré-aplicado (ambiente conectado). O Cilium
+do node não atualiza service/rotas offline - patch durante o disconnect não propaga.
+
+**Cilium:** NodeLocal DNSCache "vanilla" (iptables) não funciona com Cilium (bypassa
+iptables); exige `CiliumLocalRedirectPolicy` (LRP).
+
+### Pendências (próxima janela dedicada)
+
+1. **Tornar o fix durável (addon):** CoreDNS é managed addon do EKS (NÃO Auto Mode -
+   `computeConfig: null`). Os `kubectl patch` sobrevivem (o addon só reconcilia em
+   update), MAS um `aws eks update-addon` futuro pode sobrescrever. Migrar a config
+   (replicas, topologySpread, e - se o schema suportar - internalTrafficPolicy) para
+   `configurationValues` do addon + `resolveConflicts: PRESERVE`. VALIDAR o schema do
+   addon CoreDNS antes (probe inicial veio inconclusivo).
+2. **NodeLocal DNSCache (opcional, camada de cache):** via Cilium LRP - menos latência
+   e QPS no CoreDNS, serve_stale. Não é necessário para a resiliência (já garantida
+   por internalTrafficPolicy Local), é evolução.
+
+### Lição operacional
+
+Resiliência de DNS / infra crítica se constrói e TESTA numa janela dedicada, com
+folga de CPU e sem os nodes flapando - NUNCA ao vivo no meio do fluxo da demo.
+Patchar CoreDNS ao vivo (durante os testes) degradou a rede pod-a-pod hybrid->cloud;
+recuperação exigiu rollout completo do Cilium. Fix pré-baked + testado offline.
