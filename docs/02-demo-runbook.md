@@ -277,11 +277,10 @@ done
 > ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51
 > ```
 >
-> Já no node, criar as regras (use os IPs que o resolve retornou; repita no .52):
+> Já no node, criar as regras - um comando para cada IP que o resolve retornou (repita no .52):
 >
 > ```bash
-> sudo iptables -I OUTPUT -d 18.229.16.130 -j DROP
-> sudo iptables -I OUTPUT -d 18.229.34.27 -j DROP
+> sudo iptables -I OUTPUT -d <IP-DO-ENDPOINT> -j DROP
 > ```
 
 Acompanhar os dois virarem NotReady:
@@ -494,11 +493,10 @@ done
 > ssh -i ~/.ssh/id_ecdsa lopbruno@192.168.3.51
 > ```
 >
-> Já no node, remover as regras (use os IPs do resolve; repita no .52):
+> Já no node, remover as regras - um comando para cada IP do resolve (repita no .52):
 >
 > ```bash
-> sudo iptables -D OUTPUT -d 18.229.16.130 -j DROP
-> sudo iptables -D OUTPUT -d 18.229.34.27 -j DROP
+> sudo iptables -D OUTPUT -d <IP-DO-ENDPOINT> -j DROP
 > ```
 
 Conferir que não sobrou regra (deve retornar 0 nos dois nodes):
