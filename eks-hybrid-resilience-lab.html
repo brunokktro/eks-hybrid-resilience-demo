@@ -68,14 +68,14 @@ code{background:#2a2a2a;color:#e8d5a3;padding:2px 6px;border-radius:4px;font-siz
 <a href="#fase3">Fase 3: Desconexão em estado estável</a>
 <a href="#fase3cache">Fase 3-cache: Pod crash durante a desconexão - image cache</a>
 <a href="#fase4">Fase 4: Desconexão durante provisioning</a>
-<a href="#sec2">DNS Resiliency - a dependência escondida</a>
+<a href="#fase4b">Fase 4b: DNS Resiliency - a dependência escondida</a>
 <a href="#fase5">Fase 5: Recovery</a>
 <a href="#fase6">Fase 6: Cloud Bursting - overflow do DC para a AWS</a>
-<a href="#sec3">Trade-off das Tolerations</a>
-<a href="#sec4">Limitações conhecidas</a>
+<a href="#sec2">Trade-off das Tolerations</a>
+<a href="#sec3">Limitações conhecidas</a>
 <a href="#fase7">Fase 7: Observabilidade on-premises</a>
-<a href="#sec5">F.A.Q</a>
-<a href="#sec6">Cleanup</a>
+<a href="#sec4">F.A.Q</a>
+<a href="#sec5">Cleanup</a>
 </nav>
 <main class="content">
 <section id="intro"><h1>Introdução</h1>
@@ -227,7 +227,7 @@ server-hybrid-1-yyyyy   Running   (existentes - processando)
 server-hybrid-1-zzzzz   Pending   (NOVO - scheduler não alcança o node)
 server-hybrid-1-wwwww   Pending   (NOVO - scheduler não alcança o node)</code></pre>
 <details class="callout callout-info"><summary>Detalhe: Esta é a limitação conhecida. Durante a desconexão, ações do control p...</summary><div>Esta é a limitação conhecida. Durante a desconexão, ações do control plane (novo scheduling, HPA, rollout) ficam indisponíveis. MAS os pods existentes continuam processando. A mitigação é dimensionar as réplicas iniciais para a carga esperada (N+1 ou N+2).</div></details></section>
-<section id="sec2"><h1>DNS Resiliency - a dependência escondida <span class="duration">10 min</span></h1>
+<section id="fase4b"><h1>Fase 4b: DNS Resiliency - a dependência escondida <span class="duration">10 min</span></h1>
 <p>Último teste de falha, e o mais sutil. Ainda desconectado (FIS + iptables ativos), uma pergunta: o monitoring on-prem da Fase 7 sobrevive? Ele roda 100% nos hybrid nodes... mas o Grafana consulta o Prometheus pelo NOME (<code>prometheus.onprem-monitoring</code>), e resolver esse nome exige o CoreDNS. Onde roda o CoreDNS?</p>
 <pre><code class="language-bash">kubectl get pods -n kube-system -l k8s-app=kube-dns -o wide</code></pre>
 <p>No deploy padrão do EKS, as réplicas do CoreDNS ficam nos nodes da NUVEM. Durante a desconexão, o hybrid node não alcança o CoreDNS - o DNS dá timeout e TODA aplicação on-prem que resolve nomes quebra, mesmo com o workload inteiro rodando local. O dashboard fica lento e sem dados, não porque o Prometheus caiu, mas porque o nome dele não resolve. O monitoring &quot;local&quot; tinha uma dependência escondida da nuvem.</p>
@@ -295,12 +295,12 @@ kubectl get pods -n demo-stone -l app=burst-app -o wide \
 <details class="callout callout-warn"><summary>Nota: Nuance importante: o scale-down remove pods mas NÃO move os sobreviven...</summary><div>Nuance importante: o scale-down remove pods mas NÃO move os sobreviventes de volta - a affinity só age no scheduling. Para consolidar ativamente no DC use <code>kubectl rollout restart deploy/burst-app</code> (recria os pods, que voltam pro hybrid por preferência) ou o Descheduler em produção. Validado: pós rollout restart, 100% de volta ao hybrid.</div></details>
 <h3>Evolução em produção</h3>
 <p>Este demo usa cloud nodes já existentes (overflow). Em produção, para provisionar capacidade cloud SOB DEMANDA e destruir depois: <strong>Karpenter + Spot</strong> disparado por <strong>KEDA/Prometheus</strong> monitorando a carga local. É a mesma estratégia do sample oficial aws-samples/sample-eks-hybrid-nodes-gpu-burst-scaling, aplicável a workloads web (não só LLM). Pode ser uma demo dedicada.</p></section>
-<section id="sec3"><h1>Trade-off das Tolerations</h1>
+<section id="sec2"><h1>Trade-off das Tolerations</h1>
 <p>A demo usa <code>tolerationSeconds: 3600</code> (1h). <strong>Não existe valor universal</strong> - o mesmo mecanismo que protege na desconexão ATRASA a recuperação numa falha real de node (o control plane não distingue &quot;rede caiu&quot; de &quot;node morreu&quot;).</p>
 <table><tr><th>Perfil da app</th><th>tolerationSeconds sugerido</th></tr><tr><td>Stateless com réplicas em vários nodes</td><td>300-900 (failover rápido importa mais)</td></tr><tr><td>Stateful singleton</td><td>Longo/indefinido (evita split-brain)</td></tr><tr><td>DC-crítica (&quot;se a AWS cair&quot;)</td><td>Longo + réplicas em múltiplos nodes</td></tr></table>
 <p><strong>Insight:</strong> com zone labels (<code>topology.kubernetes.io/zone</code> por DC), o Kubernetes CANCELA evictions quando a zona inteira fica unreachable - o cenário &quot;AWS caiu&quot; já fica protegido por design.</p></section>
-<section id="sec4"><h1>Limitações conhecidas</h1>
-<table><tr><th>Limitação</th><th>Mitigação</th></tr><tr><td>Control plane na região (sem scheduling na desconexão)</td><td>Pré-dimensionar réplicas</td></tr><tr><td>SSM credentials: 1h / IAM Roles Anywhere: até 12h</td><td>Usar IRA com durationSeconds alto</td></tr><tr><td>Cilium pode reiniciar na desconexão (BGP)</td><td>v1.17+ tem o fix; usar VXLAN (nosso caso)</td></tr><tr><td>Restart de node offline: pods não voltam</td><td>Réplicas multi-node (Cenário 4)</td></tr><tr><td>ALB region-originated cai na desconexão</td><td>LB local (MetalLB/F5) para tráfego do DC</td></tr><tr><td>CoreDNS default fica só na nuvem (DNS morre no disconnect)</td><td>Réplicas on-prem via topologySpread (seção DNS Resiliency)</td></tr></table></section>
+<section id="sec3"><h1>Limitações conhecidas</h1>
+<table><tr><th>Limitação</th><th>Mitigação</th></tr><tr><td>Control plane na região (sem scheduling na desconexão)</td><td>Pré-dimensionar réplicas</td></tr><tr><td>SSM credentials: 1h / IAM Roles Anywhere: até 12h</td><td>Usar IRA com durationSeconds alto</td></tr><tr><td>Cilium pode reiniciar na desconexão (BGP)</td><td>v1.17+ tem o fix; usar VXLAN (nosso caso)</td></tr><tr><td>Restart de node offline: pods não voltam</td><td>Réplicas multi-node (Cenário 4)</td></tr><tr><td>ALB region-originated cai na desconexão</td><td>LB local (MetalLB/F5) para tráfego do DC</td></tr><tr><td>CoreDNS default fica só na nuvem (DNS morre no disconnect)</td><td>Réplicas on-prem via topologySpread (Fase 4b - DNS Resiliency)</td></tr></table></section>
 <section id="fase7"><h1>Fase 7: Observabilidade on-premises <span class="duration">5 min</span></h1>
 <p>Monitoring &quot;à moda antiga&quot; rodando 100% NOS hybrid nodes (Prometheus + Grafana + blackbox), independente da nuvem. Cobre a visibilidade que o Container Insights (cloud-side) não dá: a visão DO ON-PREM enxergando a nuvem, e que SOBREVIVE à desconexão porque roda localmente.</p>
 <p>Abra o Grafana on-prem (acesso anônimo, dashboard já provisionado):</p>
@@ -309,7 +309,7 @@ echo &quot;http://192.168.3.242/  (dashboard: On-Prem - Saude dos Nodes + Conect
 <p>O dashboard mostra:</p>
 <ul><li>Conectividade On-Prem para Nuvem (probe ICMP ao VPC): CONECTADO / DESCONECTADO</li><li>Hybrid Nodes UP (monitorados localmente pelo Prometheus on-prem)</li><li>CPU e memória por hybrid node</li><li>Nodes da Nuvem alcançáveis do on-prem (um tile por node, verde OK / vermelho INALCANÇÁVEL)</li></ul>
 <details class="callout callout-info"><summary>Detalhe: Durante a Fase 3, o painel &quot;Conectividade On-Prem para Nuvem&quot; e os til...</summary><div>Durante a Fase 3, o painel &quot;Conectividade On-Prem para Nuvem&quot; e os tiles de &quot;Nodes da Nuvem&quot; ficam vermelhos, enquanto os hybrid nodes seguem UP e o Grafana continua respondendo - porque o stack inteiro roda on-prem. É a prova de que o DC mantém observabilidade própria mesmo cego para a AWS. Deixe este dashboard aberto desde o início, ao lado das URLs do podinfo.</div></details></section>
-<section id="sec5"><h1>F.A.Q</h1>
+<section id="sec4"><h1>F.A.Q</h1>
 <h3>E storage persistente? Nossos workloads stateful?</h3>
 <p>Stateful <strong>funciona</strong> em Hybrid Nodes - o que <strong>não</strong> funciona é EBS (preso à AZ, e o EBS CSI não está na lista de add-ons compatíveis). Opções locais:</p>
 <ul><li><strong>hostPath</strong> - simples, preso ao node (é como o <a href="https://github.com/aws-samples/sample-eks-hybrid-nodes-gpu-burst-scaling">sample oficial de GPU burst</a> persiste modelos LLM localmente)</li><li><strong>local PersistentVolumes</strong> com <code>nodeAffinity</code></li><li><strong>CSI de terceiros</strong> - Longhorn, Ceph, OpenEBS, ou o CSI do storage array do próprio DC</li><li><strong>FSx CSI</strong> está na lista de compatíveis, mas é storage de rede dependente da região (falha na desconexão)</li></ul>
@@ -331,12 +331,12 @@ echo &quot;http://192.168.3.242/  (dashboard: On-Prem - Saude dos Nodes + Conect
 <h3>E o cloud bursting?</h3>
 <p>Demonstrado na <strong>Fase 6</strong> (overflow) e evoluível para <strong>Karpenter + Spot</strong> disparado por KEDA/Prometheus. Nota: bursting <strong>depende</strong> da conectividade com a região - é complementar à resiliência (um usa a nuvem quando ela está lá, o outro sobrevive quando não está).</p>
 <h3>O DNS não vira ponto único de falha no disconnect?</h3>
-<p>Vira, se o CoreDNS rodar só na nuvem - foi um achado deste lab (seção DNS Resiliency):</p>
+<p>Vira, se o CoreDNS rodar só na nuvem - foi um achado deste lab (Fase 4b - DNS Resiliency):</p>
 <ul><li><strong>Nomes internos</strong> (<code>*.svc.cluster.local</code>): exigem CoreDNS. Fix: <strong>réplica on-prem</strong> via <code>topologySpreadConstraints</code> (recomendação oficial para mixed-mode)</li><li><strong>Nomes públicos</strong>: o data plane do Route 53 é <strong>global</strong> (SLA 100%) - mas se o DC resolve via <strong>Resolver endpoint na VPC</strong> (regional, via link privado), o caminho morre com o disconnect. Resolver local no DC para nomes públicos</li><li>O CoreDNS local serve do cache mesmo sem API server - nomes existentes resolvem offline</li></ul>
 <h3>Chicago e Atlanta: um cluster para os dois DCs?</h3>
 <p><strong>Recomendação: um cluster por DC</strong> (blast radius menor, upgrades independentes, menor latência). Se optarem por cluster único com nodes nos dois DCs:</p>
 <ul><li><strong>Zone labels obrigatórias</strong> (<code>topology.kubernetes.io/zone</code> por DC) - o Kubernetes cancela evictions quando uma zona INTEIRA fica unreachable, protegendo cada DC</li><li>Requisito de rede: até <strong>200ms RTT</strong> e <strong>100Mbps+</strong> por DC</li></ul></section>
-<section id="sec6"><h1>Cleanup</h1>
+<section id="sec5"><h1>Cleanup</h1>
 <pre><code class="language-bash">kubectl delete ns demo-stone
 cd terraform/ &amp;&amp; terraform destroy</code></pre></section>
 </main>

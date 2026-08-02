@@ -366,7 +366,7 @@ server-hybrid-1-wwwww   Pending   (NOVO - scheduler não alcança o node)
 
 > Esta é a limitação conhecida. Durante a desconexão, ações do control plane (novo scheduling, HPA, rollout) ficam indisponíveis. MAS os pods existentes continuam processando. A mitigação é dimensionar as réplicas iniciais para a carga esperada (N+1 ou N+2).
 
-## DNS Resiliency - a dependência escondida (10 min)
+## Fase 4b: DNS Resiliency - a dependência escondida (10 min)
 
 Último teste de falha, e o mais sutil. Ainda desconectado (FIS + iptables ativos),
 uma pergunta: o monitoring on-prem da Fase 7 sobrevive? Ele roda 100% nos hybrid
@@ -566,7 +566,7 @@ já fica protegido por design.
 | Cilium pode reiniciar na desconexão (BGP) | v1.17+ tem o fix; usar VXLAN (nosso caso) |
 | Restart de node offline: pods não voltam | Réplicas multi-node (Cenário 4) |
 | ALB region-originated cai na desconexão | LB local (MetalLB/F5) para tráfego do DC |
-| CoreDNS default fica só na nuvem (DNS morre no disconnect) | Réplicas on-prem via topologySpread (seção DNS Resiliency) |
+| CoreDNS default fica só na nuvem (DNS morre no disconnect) | Réplicas on-prem via topologySpread (Fase 4b - DNS Resiliency) |
 
 ## Fase 7: Observabilidade on-premises (5 min)
 
@@ -647,7 +647,7 @@ Demonstrado na **Fase 6** (overflow) e evoluível para **Karpenter + Spot** disp
 
 ### O DNS não vira ponto único de falha no disconnect?
 
-Vira, se o CoreDNS rodar só na nuvem - foi um achado deste lab (seção DNS Resiliency):
+Vira, se o CoreDNS rodar só na nuvem - foi um achado deste lab (Fase 4b - DNS Resiliency):
 
 - **Nomes internos** (`*.svc.cluster.local`): exigem CoreDNS. Fix: **réplica on-prem** via `topologySpreadConstraints` (recomendação oficial para mixed-mode)
 - **Nomes públicos**: o data plane do Route 53 é **global** (SLA 100%) - mas se o DC resolve via **Resolver endpoint na VPC** (regional, via link privado), o caminho morre com o disconnect. Resolver local no DC para nomes públicos
