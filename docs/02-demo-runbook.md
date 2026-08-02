@@ -445,6 +445,12 @@ kubectl get pods -n kube-system -l k8s-app=kube-dns -o custom-columns='POD:.meta
 kubectl get svc kube-dns -n kube-system -o jsonpath='internalTrafficPolicy={.spec.internalTrafficPolicy}{"\n"}'
 ```
 
+> Nota (produção): o CoreDNS aqui é um managed addon do EKS. Estes `kubectl patch` persistem (o addon só reconcilia em create/update), mas um `aws eks update-addon` futuro pode sobrescrevê-los.
+>
+> Recomendação: em produção, aplique a config (replicaCount, topologySpreadConstraints) via `configurationValues` do addon com `resolveConflicts: PRESERVE`, em vez de patch cru - assim o addon mantém a config através de updates.
+>
+> Ref: [Manage CoreDNS for DNS in Amazon EKS](https://docs.aws.amazon.com/eks/latest/userguide/managing-coredns.html)
+
 ### Testar durante a desconexão
 
 Com a réplica local no ar, o mesmo teste que falhava agora responde:
