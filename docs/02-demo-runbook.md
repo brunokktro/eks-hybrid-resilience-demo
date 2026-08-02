@@ -430,7 +430,7 @@ kubectl -n kube-system patch deploy coredns --type merge -p '{"spec":{"replicas"
 kubectl -n kube-system patch svc kube-dns --type merge -p '{"spec":{"internalTrafficPolicy":"Local"}}'
 ```
 
-> Atenção (Cilium): com `internalTrafficPolicy: Local`, TODO node que roda pods precisa de um CoreDNS local, senão o DNS é dropado nele. Garanta a cobertura (o spread por hostname resolve). E o NodeLocal DNSCache "vanilla" (interceptação por iptables) NÃO funciona com Cilium - o Cilium bypassa iptables. Para usar NodeLocal como camada de cache, é obrigatório o Cilium Local Redirect Policy (LRP): um recurso `CiliumLocalRedirectPolicy` que redireciona o tráfego DNS para o pod NodeLocal local via eBPF. Neste lab o fix é só CoreDNS-per-node + internalTrafficPolicy Local (sem NodeLocal); LRP + NodeLocal fica como evolução de cache. Ref: docs.cilium.io - Local Redirect Policy.
+> Nota (Cilium): com `internalTrafficPolicy: Local`, TODO node que roda pods precisa de um CoreDNS local, senão o DNS é dropado nele. Garanta a cobertura (o spread por hostname resolve). E o NodeLocal DNSCache "vanilla" (interceptação por iptables) NÃO funciona com Cilium - o Cilium bypassa iptables. Para usar NodeLocal como camada de cache, é obrigatório o Cilium Local Redirect Policy (LRP): um recurso `CiliumLocalRedirectPolicy` que redireciona o tráfego DNS para o pod NodeLocal local via eBPF. Neste lab o fix é só CoreDNS-per-node + internalTrafficPolicy Local (sem NodeLocal); LRP + NodeLocal fica como evolução de cache. Ref: docs.cilium.io - Local Redirect Policy.
 
 Confirmar (CoreDNS 1/1 em cada node, incl. `mi-*`, e a policy Local):
 

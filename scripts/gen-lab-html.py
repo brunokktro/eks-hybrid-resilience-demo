@@ -84,13 +84,15 @@ def render_body(mdbody):
                     if in_code:
                         segs.append(('code', code_lang, '\n'.join(buf))); buf = []; in_code = False
                     else:
-                        if buf: segs.append(('text', '', ' '.join(x for x in buf if x.strip()))); buf = []
+                        if buf: segs.append(('text', '', '\n'.join(buf))); buf = []
                         in_code = True; code_lang = ln.strip('`').strip()
                     continue
                 buf.append(ln)
             if buf:
-                segs.append(('code', code_lang, '\n'.join(buf)) if in_code else ('text', '', ' '.join(x for x in buf if x.strip())))
-            text = next((c for k, _, c in segs if k == 'text'), '')
+                segs.append(('code', code_lang, '\n'.join(buf)) if in_code else ('text', '', '\n'.join(buf)))
+            # summary = first non-empty line of the first text segment
+            first_text = next((c for k, _, c in segs if k == 'text'), '')
+            text = next((l.strip() for l in first_text.split('\n') if l.strip()), '')
             # choose callout type + summary label from leading keyword
             low = text.lower()
             is_open = False
@@ -101,12 +103,37 @@ def render_body(mdbody):
             elif low.startswith(('pré-requisito','pre-requisito','ferramentas')): ctype, label = 'info', 'Setup'
             elif low.startswith(('referência','referencia','fix já aplicado','fix ja aplicado')): ctype, label = 'info', 'Referência'
             else: ctype, label = 'info', 'Detalhe'
-            # summary = first 60 chars
             summ = re.sub(r'^(dica|tip|nota|detalhe|referência|referencia|atenção|atencao|importante|crítico|critico|aviso)[:\s-]*', '', text, flags=re.I)
             summ_short = (summ[:70] + '...') if len(summ) > 73 else summ
+
+            def render_text_block(raw):
+                # split on blank lines into blocks; render lists and paragraphs
+                out_html, para = [], []
+                def flush(p):
+                    if not p: return
+                    if all(re.match(r'^\d+[.)]\s', x) for x in p):
+                        out_html.append('<ol>' + ''.join(f'<li>{inline(re.sub(chr(94)+chr(92)+"d+[.)]"+chr(92)+"s", "", x))}</li>' for x in p) + '</ol>')
+                    elif all(re.match(r'^[-*]\s', x) for x in p):
+                        out_html.append('<ul>' + ''.join(f'<li>{inline(x[2:])}</li>' for x in p) + '</ul>')
+                    else:
+                        out_html.append(f'<p>{inline(" ".join(p))}</p>')
+                for ln2 in raw.split('\n'):
+                    s2 = ln2.strip()
+                    if not s2:
+                        flush(para); para = []
+                    elif re.match(r'^(\d+[.)]|[-*])\s', s2):
+                        # list item: if switching from paragraph, flush first
+                        if para and not re.match(r'^(\d+[.)]|[-*])\s', para[0]): flush(para); para = []
+                        para.append(s2)
+                    else:
+                        if para and re.match(r'^(\d+[.)]|[-*])\s', para[0]): flush(para); para = []
+                        para.append(s2)
+                flush(para)
+                return ''.join(out_html)
+
             body = ''
             for k, lang2, c in segs:
-                if k == 'text' and c.strip(): body += f'<p>{inline(c)}</p>'
+                if k == 'text' and c.strip(): body += render_text_block(c)
                 elif k == 'code':
                     cls2 = f' class="language-{lang2}"' if lang2 else ''
                     body += f'<pre><code{cls2}>{esc(c)}</code></pre>'
