@@ -246,6 +246,19 @@ echo "FIS iniciado: $EXPERIMENT_ID"
 
 > Comportamento por tipo de endpoint EKS: se o kubelet alcança o endpoint PÚBLICO do cluster via internet (caso deste lab), o node PERMANECE Ready durante o FIS - a falha derruba apenas o data path (cross-cluster/VXLAN). Em ambientes com endpoint privado + Direct Connect (produção típica), o FIS derruba ambos os paths de uma vez.
 
+> Atenção - dois gatilhos independentes, não confundir na hora da demo:
+>
+> - **FIS** = corta o **data path**. Cross-cluster (cloud→on-prem) e o **ALB** caem. NÃO deixa o node NotReady neste lab.
+> - **iptables da Fase 3b** = corta o **control plane**. Node vira NotReady e as tolerations aparecem. NÃO derruba o data path.
+>
+> Consequência prática: **o ALB só fica fora do ar enquanto o FIS estiver ATIVO**. Se o experimento expirou (duração de 1h) e você mostrar o ALB só com o iptables aplicado, ele responde 200 - e parece que a demo falhou. Confira o estado antes de mostrar:
+>
+> ```bash
+> aws fis get-experiment --id ${EXPERIMENT_ID} --region sa-east-1 --query 'experiment.state.status' --output text
+> ```
+>
+> Rodar os DOIS juntos = desconexão completa (control plane + data path), que é o cenário real de "o link com a AWS caiu".
+
 ### Fase 3b: NotReady + Tolerations (2 nodes)
 
 Para demonstrar os hybrid nodes NotReady SEM afetar a LAN local (não desconecte
