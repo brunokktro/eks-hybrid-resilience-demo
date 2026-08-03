@@ -1,17 +1,17 @@
 # On-Premises Monitoring Stack - Prometheus + Grafana + Blackbox
 #
 # "A moda antiga": roda 100% NOS hybrid nodes (nodeSelector compute-type=hybrid
-# + tolerations), independente da nuvem. Da a visibilidade que o Container
-# Insights (cloud-side) NAO da: a visao DO ON-PREM enxergando a nuvem.
+# + tolerations), independente da nuvem. Dá a visibilidade que o Container
+# Insights (cloud-side) NÃO dá: a visão DO ON-PREM enxergando a nuvem.
 #
 # O que mostra:
-#   - Saude dos hybrid nodes (CPU, memoria, disco) via node-exporter local
+#   - Saúde dos hybrid nodes (CPU, memória, disco) via node-exporter local
 #   - Conectividade on-prem -> nuvem via blackbox probe (EKS endpoint). Durante
-#     a desconexao, o probe cai (DOWN) = o DC "ve" que perdeu a AWS, e continua
+#     a desconexão, o probe cai (DOWN) = o DC "vê" que perdeu a AWS, e continua
 #     monitorando localmente (o stack sobrevive porque roda on-prem)
 #
 # Exposto via MetalLB on-prem VIP (funciona e sobrevive ao disconnect porque os
-# pods estao NOS hybrid nodes).
+# pods estão NOS hybrid nodes).
 ---
 apiVersion: v1
 kind: Namespace
@@ -35,7 +35,7 @@ data:
         http:
           preferred_ip_protocol: ip4
           fail_if_not_ssl: false
-          valid_status_codes: [200,301,302,401,403]   # qualquer resposta HTTP = alcancavel
+          valid_status_codes: [200,301,302,401,403]   # qualquer resposta HTTP = alcançável
       icmp:
         prober: icmp
         timeout: 5s
@@ -260,4 +260,4 @@ data:
         options:
           path: /var/lib/grafana/dashboards
   onprem.json: |
-    {"title": "On-Prem: Saude dos Nodes + Conectividade com a Nuvem", "uid": "onprem-hybrid", "schemaVersion": 39, "version": 2, "time": {"from": "now-15m", "to": "now"}, "refresh": "5s", "panels": [{"id": 1, "title": "Conectividade On-Prem -> Nuvem (AWS VPC)", "type": "stat", "gridPos": {"h": 6, "w": 8, "x": 0, "y": 0}, "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "DESCONECTADO", "color": "red"}, "1": {"text": "CONECTADO", "color": "green"}}}]}}, "targets": [{"expr": "probe_success{probe=\"aws-vpc-cloud-node\"}", "refId": "A"}]}, {"id": 2, "title": "Hybrid Nodes UP (monitorados localmente)", "type": "stat", "gridPos": {"h": 6, "w": 8, "x": 8, "y": 0}, "targets": [{"expr": "count(up{job=\"hybrid-nodes\"}==1)", "refId": "A"}]}, {"id": 3, "title": "Latencia do probe para a nuvem (s)", "type": "timeseries", "gridPos": {"h": 6, "w": 8, "x": 16, "y": 0}, "targets": [{"expr": "probe_duration_seconds{probe=\"aws-vpc-cloud-node\"}", "refId": "A"}]}, {"id": 4, "title": "CPU por hybrid node (%)", "type": "timeseries", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6}, "targets": [{"expr": "100 - (avg by(instance)(rate(node_cpu_seconds_total{mode=\"idle\",job=\"hybrid-nodes\"}[2m]))*100)", "refId": "A", "legendFormat": "{{instance}}"}]}, {"id": 5, "title": "Memoria disponivel por hybrid node (%)", "type": "timeseries", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6}, "targets": [{"expr": "node_memory_MemAvailable_bytes{job=\"hybrid-nodes\"}/node_memory_MemTotal_bytes{job=\"hybrid-nodes\"}*100", "refId": "A", "legendFormat": "{{instance}}"}]}, {"id": 6, "title": "Nodes da Nuvem - alcancaveis do On-Prem (caem no disconnect)", "type": "stat", "gridPos": {"h": 6, "w": 24, "x": 0, "y": 14}, "options": {"colorMode": "background", "textMode": "value_and_name"}, "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "INALCANCAVEL", "color": "red"}, "1": {"text": "OK", "color": "green"}}}]}}, "targets": [{"expr": "probe_success{group=\"cloud-nodes\"}", "refId": "A", "legendFormat": "{{instance}}"}]}]}
+    {"title": "On-Prem: Saúde dos Nodes + Conectividade com a Nuvem", "uid": "onprem-hybrid", "schemaVersion": 39, "version": 2, "time": {"from": "now-15m", "to": "now"}, "refresh": "5s", "panels": [{"id": 1, "title": "Conectividade On-Prem -> Nuvem (AWS VPC)", "type": "stat", "gridPos": {"h": 6, "w": 8, "x": 0, "y": 0}, "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "DESCONECTADO", "color": "red"}, "1": {"text": "CONECTADO", "color": "green"}}}]}}, "targets": [{"expr": "probe_success{probe=\"aws-vpc-cloud-node\"}", "refId": "A"}]}, {"id": 2, "title": "Hybrid Nodes UP (monitorados localmente)", "type": "stat", "gridPos": {"h": 6, "w": 8, "x": 8, "y": 0}, "targets": [{"expr": "count(up{job=\"hybrid-nodes\"}==1)", "refId": "A"}]}, {"id": 3, "title": "Latência do probe para a nuvem (s)", "type": "timeseries", "gridPos": {"h": 6, "w": 8, "x": 16, "y": 0}, "targets": [{"expr": "probe_duration_seconds{probe=\"aws-vpc-cloud-node\"}", "refId": "A"}]}, {"id": 4, "title": "CPU por hybrid node (%)", "type": "timeseries", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6}, "targets": [{"expr": "100 - (avg by(instance)(rate(node_cpu_seconds_total{mode=\"idle\",job=\"hybrid-nodes\"}[2m]))*100)", "refId": "A", "legendFormat": "{{instance}}"}]}, {"id": 5, "title": "Memória disponível por hybrid node (%)", "type": "timeseries", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6}, "targets": [{"expr": "node_memory_MemAvailable_bytes{job=\"hybrid-nodes\"}/node_memory_MemTotal_bytes{job=\"hybrid-nodes\"}*100", "refId": "A", "legendFormat": "{{instance}}"}]}, {"id": 6, "title": "Nodes da Nuvem - alcançáveis do On-Prem (caem no disconnect)", "type": "stat", "gridPos": {"h": 6, "w": 24, "x": 0, "y": 14}, "options": {"colorMode": "background", "textMode": "value_and_name"}, "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "INALCANÇÁVEL", "color": "red"}, "1": {"text": "OK", "color": "green"}}}]}}, "targets": [{"expr": "probe_success{group=\"cloud-nodes\"}", "refId": "A", "legendFormat": "{{instance}}"}]}]}

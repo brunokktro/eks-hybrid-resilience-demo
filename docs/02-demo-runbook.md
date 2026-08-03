@@ -601,16 +601,16 @@ Abra o Grafana on-prem (acesso anônimo, dashboard já provisionado):
 
 ```bash
 # VIP on-prem do Grafana - abrir no browser
-echo "http://192.168.3.242/  (dashboard: On-Prem - Saude dos Nodes + Conectividade com a Nuvem)"
+echo "http://192.168.3.242/  (dashboard: On-Prem: Saúde dos Nodes + Conectividade com a Nuvem)"
 ```
 
 O dashboard mostra:
-- Conectividade On-Prem para Nuvem (probe ICMP ao VPC): CONECTADO / DESCONECTADO
+- Conectividade On-Prem -> Nuvem (probe ICMP ao VPC): CONECTADO / DESCONECTADO
 - Hybrid Nodes UP (monitorados localmente pelo Prometheus on-prem)
-- CPU e memória por hybrid node
+- CPU e memória disponível por hybrid node
 - Nodes da Nuvem alcançáveis do on-prem (um tile por node, verde OK / vermelho INALCANÇÁVEL)
 
-> Durante a Fase 3, o painel "Conectividade On-Prem para Nuvem" e os tiles de
+> Durante a Fase 3, o painel "Conectividade On-Prem -> Nuvem" e os tiles de
 > "Nodes da Nuvem" ficam vermelhos, enquanto os hybrid nodes seguem UP e o Grafana
 > continua respondendo - porque o stack inteiro roda on-prem.
 >

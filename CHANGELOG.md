@@ -2,6 +2,24 @@
 
 Formato baseado em Keep a Changelog. Datas em YYYY-MM-DD.
 
+## [1.2.1] - 2026-08-02
+### Security
+- Removida credencial hardcoded (senha de sudo do node) do `99-cleanup.sh`. O
+  step do static pod agora usa `ssh -t`, deixando o sudo pedir a senha
+  interativamente. Nenhuma credencial deve existir neste repo.
+
+### Fixed
+- `99-cleanup.sh` não trava mais em `Terminating` ao remover o namespace. Duas
+  causas tratadas na ordem: (1) `delete pods --force --grace-period=0` antes,
+  porque pods em node NotReady nunca confirmam a remoção; (2) revoke automático
+  das rules tcp/9898 que referenciam o SG gerenciado do ALB - enquanto existem, o
+  LB controller não consegue deletar o SG e mantém o finalizer
+  `ingress.k8s.aws/resources`. Inclui diagnóstico e a remediação do finalizer.
+- Acentuação PT-BR no dashboard Grafana on-prem (visível ao público na Fase 7):
+  "Saúde dos Nodes", "Latência do probe", "Memória disponível", "alcançáveis",
+  "INALCANÇÁVEL". Nomes de painéis do runbook alinhados ao dashboard.
+- Removidos IDs de route table específicos do lab das notas do cleanup.
+
 ## [1.2.0] - 2026-08-02
 ### Changed
 - Conteúdo público 100% genérico: namespace da demo renomeado para
