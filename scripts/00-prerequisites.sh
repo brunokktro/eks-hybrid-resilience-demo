@@ -4,7 +4,7 @@ set -euo pipefail
 
 CLUSTER_NAME="${CLUSTER_NAME:-llm-vmware-hybrid}"
 REGION="${AWS_REGION:-sa-east-1}"
-NAMESPACE="demo-stone"
+NAMESPACE="demo-resilience"
 HYBRID_LABEL="eks.amazonaws.com/compute-type=hybrid"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'

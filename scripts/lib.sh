@@ -8,7 +8,7 @@ export DEMO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export AWS_REGION="${AWS_REGION:-sa-east-1}"
 export CLUSTER_NAME="${CLUSTER_NAME:-llm-vmware-hybrid}"
 export DEMO_ACCOUNT="923739522526"
-export NAMESPACE="demo-stone"
+export NAMESPACE="demo-resilience"
 export HYBRID_LABEL="eks.amazonaws.com/compute-type=hybrid"
 
 # --- colors ---

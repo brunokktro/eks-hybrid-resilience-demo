@@ -7,7 +7,7 @@
 #     Source: https://docs.aws.amazon.com/eks/latest/best-practices/hybrid-nodes-network-disconnection-best-practices.html
 #   - Free, CNCF project, no trial expiry (vs F5 30-day trial)
 #   - Runs IN the cluster on the hybrid nodes - no extra VM in vSphere
-#   - Demonstrates the same concept as the customer's production design
+#   - Demonstrates the same concept as a typical production design
 #     (static VIP as single HTTPS entry point, like F5 + NodePort)
 #
 # INSTALL METALLB FIRST (before applying this manifest):
@@ -59,7 +59,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: server-hybrid-lb
-  namespace: demo-stone
+  namespace: demo-resilience
   labels:
     demo: hybrid-resilience
   annotations:

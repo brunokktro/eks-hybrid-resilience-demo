@@ -15,7 +15,7 @@ for exp in $(aws fis list-experiments --region "$AWS_REGION" \
   ok "FIS $exp parado"
 done
 
-step "2. Remove demo workloads (namespace demo-stone)"
+step "2. Remove demo workloads (namespace demo-resilience)"
 run kubectl delete namespace "$NAMESPACE" --ignore-not-found --timeout=120s || true
 ok "namespace $NAMESPACE removido (servers, clients, burst-app, ALB ingress, MetalLB svc)"
 

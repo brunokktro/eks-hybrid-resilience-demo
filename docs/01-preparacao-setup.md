@@ -140,7 +140,7 @@ Anote o output `fis_experiment_template_id` - será usado nos cenários de falha
 kubectl apply -f manifests/01-server-hybrid-1.yaml   # server on-prem Node 1
 kubectl apply -f manifests/03-server-cloud.yaml      # server cloud
 kubectl apply -f manifests/04-clients.yaml           # 3 clients
-kubectl get pods -n demo-stone -o wide
+kubectl get pods -n demo-resilience -o wide
 ```
 
 ## Setup - Passo 5: MetalLB (LB on-premises)
@@ -158,7 +158,7 @@ helm install metallb metallb/metallb \
   --set 'speaker.tolerations[0].effect=NoExecute'
 
 kubectl apply -f manifests/06-metallb-onprem-lb.yaml
-kubectl get svc server-hybrid-lb -n demo-stone
+kubectl get svc server-hybrid-lb -n demo-resilience
 ```
 
 ## Setup - Passo 6: ALB Ingress
@@ -166,7 +166,7 @@ kubectl get svc server-hybrid-lb -n demo-stone
 ```bash
 kubectl apply -f manifests/05-ingress-alb.yaml
 kubectl wait --for=jsonpath='{.status.loadBalancer.ingress[0].hostname}' \
-  ingress/demo-ingress -n demo-stone --timeout=180s
+  ingress/demo-ingress -n demo-resilience --timeout=180s
 ```
 
 > O ALB com target-type ip precisa que o security group do cluster/nodes permita o SG do ALB na porta 9898, e que as subnets do ALB tenham rota para o pod CIDR (10.201.0.0/16). Ver troubleshooting em environment-status.

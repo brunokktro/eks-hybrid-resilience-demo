@@ -17,7 +17,7 @@
 set -euo pipefail
 
 # ─── Configuration (adjust for your environment) ─────────────────────────────
-NAMESPACE="demo-stone"
+NAMESPACE="demo-resilience"
 REGION="${AWS_REGION:-sa-east-1}"
 CLUSTER_NAME="${CLUSTER_NAME:-llm-vmware-hybrid}"
 HYBRID_NODE_LABEL="eks.amazonaws.com/compute-type=hybrid"

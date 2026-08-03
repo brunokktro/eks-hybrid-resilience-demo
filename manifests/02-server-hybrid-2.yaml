@@ -6,7 +6,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: server-hybrid-2
-  namespace: demo-stone
+  namespace: demo-resilience
   labels:
     app: server
     location: hybrid
@@ -83,7 +83,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: server-hybrid-2
-  namespace: demo-stone
+  namespace: demo-resilience
 spec:
   type: ClusterIP
   ports:

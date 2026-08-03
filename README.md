@@ -103,7 +103,7 @@ Pattern: `{role}-{location}[-to-{target}]`
 
 ```bash
 # What you see during the demo:
-$ kubectl get pods -n demo-stone -o wide
+$ kubectl get pods -n demo-resilience -o wide
 NAME                              READY  STATUS   NODE
 server-hybrid-1-xxxxx             1/1    Running  mi-0xxx... (HYBRID Node 1)
 server-hybrid-1-yyyyy             1/1    Running  mi-0xxx... (HYBRID Node 1)
@@ -139,17 +139,17 @@ client-cloud-to-hybrid-xxxxx      1/1    Running  ip-10-43.. (EKS Region)
 | Demo workloads (manifests) | servers (hybrid-1/2, cloud), clients (local/cross-node/cross-cluster), ALB ingress, MetalLB VIP, static pod, burst-app | `kubectl apply` / `99-cleanup.sh` |
 | Live "knobs" | FIS start-experiment, iptables block, kubectl scale | Triggered live during the demo |
 
-## Why This Maps to the Customer Use Case
+## Why This Maps to a Typical Enterprise Use Case
 
-the customer's a plataforma IDP (Kubernetes-based IDP) must run in the Chicago and Atlanta
-datacenters with a hard requirement: **if AWS goes down, the datacenter must not
-stop**. This demo maps directly:
+The reference scenario: a Kubernetes-based Internal Developer Platform (IDP) that
+must run in two on-premises datacenters with a hard requirement: **if AWS goes
+down, the datacenter must not stop**. This demo maps directly:
 
 - **Scenario 1/1b (disconnect resilience)** = the core requirement. Workloads on-prem
   keep serving, including cross-node communication within the DC, when the AWS
   link is lost.
-- **Scenario 3c (MetalLB VIP)** = analogous to the customer's planned NodePort + F5 static
-  entry point. The local LB keeps serving with zero AWS dependency.
+- **Scenario 3c (MetalLB VIP)** = analogous to a NodePort + hardware load balancer
+  (F5 or equivalent) static entry point. The local LB keeps serving with zero AWS dependency.
 - **Scenario 2/4 (limitations)** = transparent about what does NOT work (new
   scheduling during disconnect, node restart offline), with the mitigation:
   pre-sized multi-node replicas.
@@ -370,7 +370,8 @@ terraform apply \
 
 # Note the outputs:
 #   fis_experiment_template_id = "EXTxxxxxxxxxx"
-#   ssm_document_name = "demo-stone-network-blackhole-cidr"
+#   prefix_list_id             = "pl-xxxxxxxx"
+#   fis_role_arn               = "arn:aws:iam::<acct>:role/hybrid-resilience-demo-fis-role"
 ```
 
 ### Step 2: Label the Hybrid Nodes (REQUIRED before deploying)
@@ -398,7 +399,7 @@ kubectl apply -f manifests/03-server-cloud.yaml      # AWS cloud
 kubectl apply -f manifests/04-clients.yaml
 
 # Verify everything is running
-kubectl get pods -n demo-stone -o wide
+kubectl get pods -n demo-resilience -o wide
 ```
 
 ### Step 4: Create ALB Ingress
@@ -410,10 +411,10 @@ kubectl apply -f manifests/05-ingress-alb.yaml
 # Wait for ALB to provision (~2-3 minutes)
 echo "Waiting for ALB..."
 kubectl wait --for=jsonpath='{.status.loadBalancer.ingress[0].hostname}' \
-  ingress/demo-ingress -n demo-stone --timeout=180s
+  ingress/demo-ingress -n demo-resilience --timeout=180s
 
 # Get the ALB DNS
-ALB=$(kubectl get ingress demo-ingress -n demo-stone \
+ALB=$(kubectl get ingress demo-ingress -n demo-resilience \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 echo "ALB ready: http://${ALB}/"
 
@@ -500,7 +501,7 @@ kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=metallb \
 kubectl apply -f manifests/06-metallb-onprem-lb.yaml
 
 # Verify the VIP was assigned
-kubectl get svc server-hybrid-lb -n demo-stone
+kubectl get svc server-hybrid-lb -n demo-resilience
 # EXTERNAL-IP should show an IP from the pool (e.g., 192.168.3.240)
 
 # Test from the on-prem LAN
@@ -518,12 +519,12 @@ chmod +x scripts/demo-live.sh
 
 ## Execution Guide (Step-by-Step for Live Demo)
 
-The full step-by-step is maintained in a single place - present from there, never run a script in front of the customer:
+The full step-by-step is maintained in a single place - present from there, never run a script in front of the audience:
 
 - **Canonical runbook:** [`docs/02-demo-runbook.md`](docs/02-demo-runbook.md) - each phase has objective, commands, and expected result; reads like a Workshop Studio module (self-explanatory).
 - **Hosted hands-on lab:** **https://brunokktro.github.io/eks-hybrid-resilience/** - the same runbook as a page with collapsible tips, copy-paste commands, architecture diagram, and image lightbox.
 
-`scripts/demo-live.sh` is a validator/tester to confirm the environment before the demo (never shown to the customer). `scripts/99-cleanup.sh` resets it afterward.
+`scripts/demo-live.sh` is a validator/tester to confirm the environment before the demo (never shown to the audience). `scripts/99-cleanup.sh` resets it afterward.
 
 **Phases, in order:** Fase 0 (environment prep) - Fase 1 (current state) - Fase 2 (LB happy path) - Fase 3 (steady-state disconnection + NotReady/tolerations) - Fase 3-cache (pod crash / image cache) - Fase 4 (disconnection during provisioning) - Fase 4b (DNS resiliency, the hidden dependency) - Fase 5 (recovery) - Fase 6 (cloud bursting) - Fase 7 (on-prem observability) - Trade-off das Tolerations - Limitações conhecidas - F.A.Q.
 
@@ -546,7 +547,7 @@ tolerations:
     tolerationSeconds: 3600
 ```
 
-### The tolerationSeconds Trade-Off (discuss openly with the customer)
+### The tolerationSeconds Trade-Off (discuss openly with stakeholders)
 
 **This demo uses 3600s (1 hour). There is NO universally correct value.** The same mechanism that protects workloads during a network disconnection DELAYS recovery from a real node failure:
 
@@ -578,7 +579,7 @@ tolerations:
 
 1. **Tolerations are per-pod, not per-cluster.** Each application team tunes its own value based on its business requirements. the platform can offer profiles (e.g., "resilient" vs "fast-failover") as IDP presets.
 2. **Replicas across nodes reduce the pressure on this decision.** If the app has replicas on 3 nodes, a long toleration costs little: a real single-node failure only degrades capacity, and the disconnection case is fully covered. This combo (long toleration + multi-node replicas) is the recommended pattern for the DC-critical profile.
-3. **Zone labels change the game for FULL-DC disconnects.** If all hybrid nodes carry a `topology.kubernetes.io/zone` label per DC (e.g., `zone=chicago-dc1`), Kubernetes CANCELS evictions when the entire zone is unreachable - even without custom tolerations. Tolerations then only matter for PARTIAL failures (some nodes down, some up). Configure via nodeadm: `--node-labels=topology.kubernetes.io/zone=dc1`.
+3. **Zone labels change the game for FULL-DC disconnects.** If all hybrid nodes carry a `topology.kubernetes.io/zone` label per DC (e.g., `zone=dc1`), Kubernetes CANCELS evictions when the entire zone is unreachable - even without custom tolerations. Tolerations then only matter for PARTIAL failures (some nodes down, some up). Configure via nodeadm: `--node-labels=topology.kubernetes.io/zone=dc1`.
 4. **The 300s default is not configurable in EKS** (`default-unreachable-toleration-seconds` is control-plane managed). Per-pod tolerations are the only lever - which is fine, because per-app is where this decision belongs.
 
 ### Production Recommendations
@@ -629,13 +630,13 @@ AWS's own best-practices doc for network disconnections explicitly references st
 | **hostPort conflicts** | hostNetwork pods compete for node ports | Plan port allocation per node |
 | **Service routing after offline restart** | kube-proxy (DaemonSet) doesn't restart offline - ClusterIP/NodePort routing on the restarted node is broken until reconnect | Access static pods via node IP + hostPort directly |
 
-### DR Pattern: Static Pods as "warm standby" (customer idea - analysis)
+### DR Pattern: Static Pods as "warm standby" (analysis)
 
 The idea: run ~25% of app capacity as static pods, and on a node restart during disconnect, redirect traffic to them via NodePort/MetalLB using the pod IPs.
 
 **Assessment: viable, with one correction - the redirect must NOT depend on NodePort/MetalLB.** After an offline restart, kube-proxy and the MetalLB speaker on that node do not come back, so Service-based routing is dead on that node. The redirect needs to target the static pods DIRECTLY (hostNetwork = node IP + fixed hostPort).
 
-**The corrected pattern (works with the customer's F5 design):**
+**The corrected pattern (works with a hardware LB design, e.g. F5):**
 
 ```
                         F5 (on-prem, static entry point)
@@ -662,7 +663,7 @@ The idea: run ~25% of app capacity as static pods, and on a node restart during 
 4. Images must be pre-pulled and protected from GC on every node
 5. Test the F5 health-check timings: too aggressive = flapping during brief disconnects; too slow = downtime window
 
-**Verdict:** as a DR palliative for the "AWS region disconnect + node maintenance/failure" combo, the pattern is sound and aligns with the F5 + NodePort design the customer already chose. It should complement (not replace) multi-node replicas - replicas remain the first line of defense.
+**Verdict:** as a DR palliative for the "AWS region disconnect + node maintenance/failure" combo, the pattern is sound and aligns with a hardware LB + NodePort design. It should complement (not replace) multi-node replicas - replicas remain the first line of defense.
 
 ---
 
@@ -743,7 +744,7 @@ For visual, immediate impact during live demos:
 
 ```bash
 # Remove K8s resources
-kubectl delete ns demo-stone
+kubectl delete ns demo-resilience
 
 # Remove FIS infrastructure
 cd terraform/

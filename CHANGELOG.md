@@ -2,6 +2,19 @@
 
 Formato baseado em Keep a Changelog. Datas em YYYY-MM-DD.
 
+## [1.2.0] - 2026-08-02
+### Changed
+- Conteúdo público 100% genérico: namespace da demo renomeado para
+  `demo-resilience` (manifests, docs, scripts, lab HTML) e removidas as
+  referências de contexto específico de cliente (cidades dos datacenters,
+  "the customer's design"). O caso de uso agora é descrito como IDP em dois
+  datacenters on-premises.
+- Acentuação PT-BR corrigida na prosa do runbook (Fases 3b e 3-cache):
+  comunicação, não, é, cenário, autônomo, dúvida, inalcançável, sobrevivência,
+  imutável/mutável, réplicas, pré-requisito.
+- README: outputs reais do Terraform (`prefix_list_id`, `fis_role_arn`) no lugar
+  do `ssm_document_name` obsoleto do desenho antigo baseado em SSM.
+
 ## [1.1.0] - 2026-07-29
 ### Added
 - Alinhamento ao formato demo-factory: `scripts/lib.sh` (helpers narrados
