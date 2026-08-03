@@ -2,6 +2,19 @@
 
 Formato baseado em Keep a Changelog. Datas em YYYY-MM-DD.
 
+## [1.2.2] - 2026-08-02
+### Added
+- Fase 3: callout explícito separando os DOIS gatilhos de falha - FIS corta o
+  **data path** (cross-cluster e ALB caem, node segue Ready neste lab) e o
+  iptables da Fase 3b corta o **control plane** (node NotReady + tolerations).
+  Inclui a dependência que confunde ao vivo: **o ALB só fica fora do ar enquanto
+  o FIS estiver ATIVO** - com o experimento expirado ele responde 200 e parece
+  falha da demo. Comando de checagem do status do experimento incluído.
+
+### Fixed
+- README: referência morta a `scripts/demo-live.sh` (arquivo nunca existiu)
+  corrigida para `scripts/validate-demo.sh`, com o `FIS_TEMPLATE_ID` necessário.
+
 ## [1.2.1] - 2026-08-02
 ### Security
 - Removida credencial hardcoded (senha de sudo do node) do `99-cleanup.sh`. O

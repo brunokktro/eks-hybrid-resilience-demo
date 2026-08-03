@@ -508,11 +508,12 @@ kubectl get svc server-hybrid-lb -n demo-resilience
 curl -s http://192.168.3.240/ | jq '{hostname, message}'
 ```
 
-### Step 5: Run the Demo
+### Step 5: Validate the Environment (dry-run, before the demo)
 
 ```bash
-chmod +x scripts/demo-live.sh
-./scripts/demo-live.sh
+chmod +x scripts/validate-demo.sh
+export FIS_TEMPLATE_ID=<id from terraform output>
+./scripts/validate-demo.sh    # interactive menu - option A runs everything + reset
 ```
 
 ---
@@ -524,7 +525,7 @@ The full step-by-step is maintained in a single place - present from there, neve
 - **Canonical runbook:** [`docs/02-demo-runbook.md`](docs/02-demo-runbook.md) - each phase has objective, commands, and expected result; reads like a Workshop Studio module (self-explanatory).
 - **Hosted hands-on lab:** **https://brunokktro.github.io/eks-hybrid-resilience/** - the same runbook as a page with collapsible tips, copy-paste commands, architecture diagram, and image lightbox.
 
-`scripts/demo-live.sh` is a validator/tester to confirm the environment before the demo (never shown to the audience). `scripts/99-cleanup.sh` resets it afterward.
+`scripts/validate-demo.sh` is a validator/tester to confirm the environment before the demo (never shown to the audience). `scripts/99-cleanup.sh` resets it afterward.
 
 **Phases, in order:** Fase 0 (environment prep) - Fase 1 (current state) - Fase 2 (LB happy path) - Fase 3 (steady-state disconnection + NotReady/tolerations) - Fase 3-cache (pod crash / image cache) - Fase 4 (disconnection during provisioning) - Fase 4b (DNS resiliency, the hidden dependency) - Fase 5 (recovery) - Fase 6 (cloud bursting) - Fase 7 (on-prem observability) - Trade-off das Tolerations - Limitações conhecidas - F.A.Q.
 
